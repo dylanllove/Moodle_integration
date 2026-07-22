@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@uni/db": ["./packages/db/src/index.ts"],
+      "@uni/lms": ["./packages/lms/src/index.ts"],
+      "@uni/ai": ["./packages/ai/src/index.ts"],
+      "@uni/transcribe": ["./packages/transcribe/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "apps/server/src/**/*.ts"]
+}

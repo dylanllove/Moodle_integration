@@ -1,0 +1,23 @@
+{
+  "name": "@uni/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.1",
+    "@fastify/multipart": "^9.0.3",
+    "@uni/ai": "*",
+    "@uni/db": "*",
+    "@uni/lms": "*",
+    "@uni/transcribe": "*",
+    "dotenv": "^16.4.7",
+    "fastify": "^5.2.0",
+    "jszip": "^3.10.1",
+    "unpdf": "^0.12.1"
+  }
+}

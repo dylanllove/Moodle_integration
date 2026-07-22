@@ -1,0 +1,22 @@
+node_modules/
+dist/
+build/
+*.log
+
+# Local user data — never commit
+data/
+.env
+.env.local
+
+# Personal timetable exports (auto-detected locally, never committed)
+*.ics
+
+# Playwright browser profile (contains your logged-in session)
+.lms-profile/
+
+# Whisper model files
+*.bin
+models/
+
+# OS
+.DS_Store
