@@ -44,13 +44,14 @@ export async function registerCoreRoutes(app: FastifyInstance): Promise<void> {
 
   app.get<{ Querystring: { course_id?: string } }>("/api/lectures", async (req) => {
     const { course_id } = req.query;
+    const sel = `SELECT l.*, t.status AS transcript_status,
+        CASE WHEN t.text IS NOT NULL AND length(t.text) > 0 THEN 1 ELSE 0 END AS has_text
+      FROM lectures l LEFT JOIN transcripts t ON t.lecture_id = l.id`;
     if (course_id)
-      return db.prepare("SELECT * FROM lectures WHERE course_id = ? ORDER BY recorded_at DESC").all(course_id);
+      return db.prepare(`${sel} WHERE l.course_id = ? ORDER BY l.recorded_at DESC`).all(course_id);
+    // Default: active courses only (keeps the list to what you're currently taking).
     return db
-      .prepare(
-        `SELECT l.* FROM lectures l JOIN courses c ON c.id = l.course_id
-         WHERE c.active = 1 ORDER BY l.recorded_at DESC`,
-      )
+      .prepare(`${sel} JOIN courses c ON c.id = l.course_id WHERE c.active = 1 ORDER BY l.recorded_at DESC`)
       .all();
   });
 

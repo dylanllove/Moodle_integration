@@ -13,11 +13,20 @@ import {
   withEchoLock,
 } from "@uni/lms";
 import { extractAudioMp3, transcribeFile } from "@uni/transcribe";
+import { cleanTranscript } from "@uni/ai";
 
 interface Section {
   sectionId: string;
   courseId: string | null;
   label?: string;
+}
+
+/** Make Echo titles distinguishable: drop the "CODE-SEM-Comp-" prefix, add the date. */
+function niceEchoTitle(raw: string, start: string | null): string {
+  const name = raw.replace(/^[A-Z]{2,4}\d{3}-\d{2}[A-Z]\d-[A-Za-z]+-?/, "").trim() || raw;
+  if (!start) return name;
+  const d = new Date(start).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+  return `${name} · ${d}`;
 }
 
 function sections(): Section[] {
@@ -88,11 +97,12 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
         }
         for (const l of lessons) {
           const id = `echo360:${l.lessonId}`;
+          const title = niceEchoTitle(l.title, l.start);
           db.prepare(
             `INSERT INTO lectures (id, course_id, title, url, provider, recorded_at)
              VALUES (?,?,?,?,?,?)
              ON CONFLICT(id) DO UPDATE SET title=excluded.title, course_id=excluded.course_id, updated_at=datetime('now')`,
-          ).run(id, sec.courseId, l.title, `https://echo360.net.au/lesson/${l.lessonId}/classroom`, "echo360", l.start);
+          ).run(id, sec.courseId, title, `https://echo360.net.au/lesson/${l.lessonId}/classroom`, "echo360", l.start);
           counts.lessons++;
 
           // Also surface the lecture's scheduled time on the calendar/timetable.
@@ -179,9 +189,10 @@ async function processLesson(
 
   mark("transcribing");
   const { text, segments } = await transcribeFile(mp3);
+  const clean = await cleanTranscript(text).catch(() => text);
   db.prepare(
     `UPDATE transcripts SET status='done', text=?, segments=?, error=NULL, updated_at=datetime('now') WHERE lecture_id=?`,
-  ).run(text, JSON.stringify(segments), lectureId);
-  app.log.info(`Echo360 ${lessonId}: transcribed audio`);
+  ).run(clean, JSON.stringify(segments), lectureId);
+  app.log.info(`Echo360 ${lessonId}: transcribed + cleaned audio`);
   return "transcribed";
 }

@@ -5,6 +5,7 @@ export {
   explain,
   flashcards,
   cheatSheet,
+  cleanTranscript,
   type Flashcard,
 } from "./study.js";
 export {

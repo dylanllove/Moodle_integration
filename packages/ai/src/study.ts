@@ -62,6 +62,42 @@ ${corpus}`,
   );
 }
 
+/**
+ * Turn a raw ASR transcript (run-on, no punctuation, filler words) into clean,
+ * readable prose — fixing punctuation/capitalisation and splitting into
+ * paragraphs, WITHOUT summarising or changing what was said. Chunked so long
+ * lectures stay within limits.
+ */
+export async function cleanTranscript(raw: string): Promise<string> {
+  const text = (raw ?? "").trim();
+  if (text.length < 200) return text;
+
+  const chunks = splitWords(text, 4500);
+  const cleaned: string[] = [];
+  for (const chunk of chunks) {
+    cleaned.push(
+      await complete(
+        `Reformat this lecture transcript segment into clean, readable text. Fix punctuation and capitalisation, split into sensible paragraphs, and remove filler ("um", "uh", "you know"), false starts and stutters. Do NOT summarise, add, or remove real content — keep everything the speaker actually said. Output only the cleaned text.\n\nTRANSCRIPT:\n${chunk}`,
+        {
+          system: "You clean up speech-to-text transcripts. You never summarise or invent content.",
+          model: MODEL_FAST,
+          maxTokens: 4096,
+          temperature: 0.1,
+        },
+      ),
+    );
+  }
+  return cleaned.join("\n\n");
+}
+
+function splitWords(text: string, maxWords: number): string[] {
+  const words = text.split(/\s+/);
+  if (words.length <= maxWords) return [text];
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i += maxWords) out.push(words.slice(i, i + maxWords).join(" "));
+  return out;
+}
+
 export interface Flashcard {
   q: string;
   a: string;

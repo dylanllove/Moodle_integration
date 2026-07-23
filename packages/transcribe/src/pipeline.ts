@@ -2,6 +2,7 @@ import { getDb, type Lecture } from "@uni/db";
 import { resolveAudio } from "./download.js";
 import { probeDuration } from "./ffmpeg.js";
 import { transcribeFile } from "./openai-transcribe.js";
+import { cleanTranscript } from "@uni/ai";
 
 type Status = "pending" | "downloading" | "transcribing" | "done" | "error";
 
@@ -51,8 +52,9 @@ async function processOne(lectureId: string): Promise<void> {
 
   setStatus(lectureId, "transcribing", { error: null });
   const { text, segments } = await transcribeFile(audioPath);
+  const clean = await cleanTranscript(text).catch(() => text);
 
-  setStatus(lectureId, "done", { text, segments, error: null });
+  setStatus(lectureId, "done", { text: clean, segments, error: null });
 }
 
 function setStatus(

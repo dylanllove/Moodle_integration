@@ -20,3 +20,6 @@ models/
 
 # OS
 .DS_Store
+
+# Temp/scratch scripts
+_*.mjs

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { enqueue, queueState, extractAudioMp3, transcribeFile } from "@uni/transcribe";
 import { getDb, dataDir } from "@uni/db";
+import { cleanTranscript } from "@uni/ai";
 import { extractSlideText } from "../extract.js";
 
 export async function registerTranscribeRoutes(app: FastifyInstance): Promise<void> {
@@ -61,10 +62,11 @@ export async function registerTranscribeRoutes(app: FastifyInstance): Promise<vo
       const mp3 = raw.replace(/\.[^.]+$/, "") + ".mp3";
       await extractAudioMp3(raw, mp3);
       const { text, segments } = await transcribeFile(mp3);
+      const clean = await cleanTranscript(text).catch(() => text);
       db.prepare(
         `INSERT INTO transcripts (id, lecture_id, status, text, segments) VALUES (?,?,?,?,?)
          ON CONFLICT(lecture_id) DO UPDATE SET status='done', text=excluded.text, segments=excluded.segments, updated_at=datetime('now')`,
-      ).run("tr:" + lectureId, lectureId, "done", text, JSON.stringify(segments));
+      ).run("tr:" + lectureId, lectureId, "done", clean, JSON.stringify(segments));
       return { ok: true, lecture_id: lectureId };
     } catch (e) {
       setError(db, lectureId, String(e));

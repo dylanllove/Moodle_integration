@@ -31,6 +31,8 @@ export interface Lecture {
   provider: string | null;
   recorded_at: string | null;
   duration_sec: number | null;
+  transcript_status?: string | null;
+  has_text?: number;
 }
 
 export interface EchoSection {

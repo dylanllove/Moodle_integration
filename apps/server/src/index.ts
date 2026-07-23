@@ -23,7 +23,8 @@ import { registerCheatsheetRoutes } from "./routes/cheatsheet.js";
 import { registerEcho360Routes } from "./routes/echo360.js";
 import { registerAskRoutes } from "./routes/ask.js";
 
-const app = Fastify({ logger: true });
+// Echo360 lesson ids are long (they embed timestamps), so allow long route params.
+const app = Fastify({ logger: true, maxParamLength: 1000 });
 
 await app.register(cors, { origin: true });
 await app.register(multipart, { limits: { fileSize: 500 * 1024 * 1024 } });

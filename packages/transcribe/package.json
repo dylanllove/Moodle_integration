@@ -8,6 +8,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@uni/ai": "*",
     "@uni/db": "*",
     "@uni/lms": "*"
   }
