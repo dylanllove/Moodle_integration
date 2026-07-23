@@ -3,16 +3,16 @@
 A **local, open-source** study manager that plugs into your university's Moodle/Learn and
 Echo360, then does the boring parts for you:
 
-- 📚 **Syncs your Moodle** — active courses, assignments (with briefs), deadlines & opening dates.
-- 📅 **Clean calendar + timetable** — imports your university timetable (iCal), colour-codes by
+-  **Syncs your Moodle** — active courses, assignments (with briefs), deadlines & opening dates.
+-  **Clean calendar + timetable** — imports your university timetable (iCal), colour-codes by
   type, shows a **Today's schedule**, and a click-a-day detail view.
-- 🎧 **Auto-transcribes lectures** — logs into Echo360, downloads your recordings and transcribes
+-  **Auto-transcribes lectures** — logs into Echo360, downloads your recordings and transcribes
   them (or grabs existing captions). Also pulls lecture slide decks as text.
-- 🧠 **AI cheat sheets** — aggregates slides + transcripts + forum posts + briefs into an
+-  **AI cheat sheets** — aggregates slides + transcripts + forum posts + briefs into an
   exam-focused cheat sheet per course.
-- 📦 **One-click study pack** — every course exported as Markdown to drop into any LLM.
-- ✍️ **Assignment assistant** — outlines, drafts you rewrite, and feedback. *You stay the author.*
-- 💬 **Chat** — quick questions across your courses ("what's due this week?", "where's my next lab?").
+-  **One-click study pack** — every course exported as Markdown to drop into any LLM.
+-  **Assignment assistant** — outlines, drafts you rewrite, and feedback. *You stay the author.*
+-  **Chat** — quick questions across your courses ("what's due this week?", "where's my next lab?").
 
 Everything runs **on your machine**. Your data, credentials, lecture audio and notes never leave it
 except to talk directly to Moodle, Echo360 and OpenAI.
