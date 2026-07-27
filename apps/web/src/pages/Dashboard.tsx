@@ -56,6 +56,9 @@ export function Dashboard() {
       {loading && <Loading label="Loading your dashboard…" />}
       <div className={loading ? "hidden" : ""}>
 
+      {/* First-run guidance when nothing's synced yet */}
+      {!loading && courses.length === 0 && <GettingStarted />}
+
       {/* Today's timetable */}
       <Card className="mb-6 p-5">
         <div className="mb-3 flex items-center justify-between">
@@ -97,9 +100,11 @@ export function Dashboard() {
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
         <Card hover className="p-5">
           <div className="mb-1 text-sm font-semibold text-slate-900">📦 Study pack</div>
-          <p className="mb-4 text-xs leading-relaxed text-slate-500">Every course as Markdown for any LLM.</p>
+          <p className="mb-4 text-xs leading-relaxed text-slate-500">
+            All courses + a CLAUDE.md tutor guide, zipped for any LLM.
+          </p>
           <a href="/api/export/all" download>
-            <Button variant="primary" className="w-full">Download all (.md)</Button>
+            <Button variant="primary" className="w-full">Download study pack</Button>
           </a>
         </Card>
         <Card className="p-5">
@@ -169,4 +174,35 @@ export function Dashboard() {
 function greeting(): string {
   const h = new Date().getHours();
   return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
+function GettingStarted() {
+  const steps = [
+    { t: "Add your keys", d: "Put MOODLE_URL, MOODLE_TOKEN and OPENAI_API_KEY in your .env file, then restart.", tag: ".env" },
+    { t: "Sync Moodle", d: "Hit “Sync Moodle” (bottom-left) to pull your courses, assignments and deadlines.", tag: "sidebar" },
+    { t: "Connect Echo360", d: "Settings → Echo360 → Connect to auto-transcribe your lecture recordings.", tag: "Settings" },
+    { t: "Add your timetable", d: "Settings → Class timetable → paste your iCal link (or drop the .ics in the project folder).", tag: "Settings" },
+  ];
+  return (
+    <Card className="mb-6 border-indigo-100 bg-indigo-50/50 p-6">
+      <h2 className="mb-1 text-base font-semibold text-slate-900">👋 Welcome — let's get you set up</h2>
+      <p className="mb-4 text-sm text-slate-600">A few one-time steps and your dashboard fills itself in.</p>
+      <ol className="space-y-3">
+        {steps.map((s, i) => (
+          <li key={i} className="flex gap-3">
+            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-semibold text-white">{i + 1}</span>
+            <div>
+              <div className="text-sm font-medium text-slate-900">
+                {s.t} <span className="ml-1 rounded bg-white px-1.5 py-0.5 text-[11px] font-normal text-slate-500 ring-1 ring-slate-200">{s.tag}</span>
+              </div>
+              <div className="text-sm text-slate-600">{s.d}</div>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <div className="mt-4">
+        <Link to="/settings"><Button variant="primary">Open Settings</Button></Link>
+      </div>
+    </Card>
+  );
 }

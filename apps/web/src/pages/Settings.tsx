@@ -107,8 +107,11 @@ export function Settings() {
 
         <Card className="p-6">
           <h2 className="mb-1 text-sm font-semibold text-slate-900">Study pack export</h2>
-          <p className="mb-3 text-xs text-slate-500">Every active course as Markdown — transcripts, slide text, forum posts.</p>
-          <a href="/api/export/all" download><Button variant="primary">Download all (.md)</Button></a>
+          <p className="mb-3 text-xs text-slate-500">
+            Every active course as Markdown (transcripts, slide text, forum posts) plus a CLAUDE.md
+            tutor guide — zipped for any LLM.
+          </p>
+          <a href="/api/export/all" download><Button variant="primary">Download study pack</Button></a>
         </Card>
       </div>
     </div>
