@@ -75,7 +75,7 @@ export function Courses() {
                       {busy === c.id ? "Generating…" : "✨ Cheat sheet"}
                     </Button>
                     <a href={`/api/export/course/${encodeURIComponent(c.id)}`} download>
-                      <Button size="sm">Download .md</Button>
+                      <Button size="sm">Download pack</Button>
                     </a>
                     {showAll && (
                       <Button size="sm" variant="ghost" onClick={() => toggle(c)}>

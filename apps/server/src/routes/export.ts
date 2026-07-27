@@ -20,13 +20,23 @@ export async function registerExportRoutes(app: FastifyInstance): Promise<void> 
     return md.markdown;
   });
 
-  // Download one course as a .md file.
+  // Download one course as a zip: the course .md + a CLAUDE.md tutor guide.
   app.get<{ Params: { id: string } }>("/api/export/course/:id", async (req, reply) => {
-    const md = await buildCourseMarkdown(req.params.id);
+    const course = getDb()
+      .prepare("SELECT id, code, name FROM courses WHERE id = ?")
+      .get(req.params.id) as { id: string; code: string | null; name: string } | undefined;
+    if (!course) return reply.code(404).send({ error: "course not found" });
+    const md = await buildCourseMarkdown(course.id);
     if (!md) return reply.code(404).send({ error: "course not found" });
-    reply.header("content-type", "text/markdown; charset=utf-8");
-    reply.header("content-disposition", `attachment; filename="${md.filename}"`);
-    return md.markdown;
+
+    const zip = new JSZip();
+    zip.file(md.filename, md.markdown);
+    zip.file("CLAUDE.md", buildTutorGuide([{ code: course.code, name: course.name, filename: md.filename }]));
+    const buf = await zip.generateAsync({ type: "nodebuffer" });
+    const base = (course.code || course.name).replace(/[^\w.-]+/g, "_");
+    reply.header("content-type", "application/zip");
+    reply.header("content-disposition", `attachment; filename="${base}.zip"`);
+    return buf;
   });
 
   // Download one lecture's transcript / slide text as .md
