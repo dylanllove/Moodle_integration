@@ -1,7 +1,16 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "./api.js";
 import { ChatWidget } from "./ChatWidget.js";
+
+function relTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
 
 const nav = [
   { to: "/", label: "Dashboard", icon: HomeIcon, end: true },
@@ -16,6 +25,11 @@ const nav = [
 export function Layout() {
   const [syncing, setSyncing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  const [lastSynced, setLastSynced] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.settings().then((s) => setLastSynced(s.last_synced ?? null)).catch(() => {});
+  }, []);
 
   async function sync() {
     setSyncing(true);
@@ -86,7 +100,9 @@ export function Layout() {
               </svg>
               {syncing ? "Syncing…" : "Sync Moodle"}
             </button>
-            {status && <p className="mt-2 text-center text-xs text-slate-400">{status}</p>}
+            <p className="mt-2 text-center text-xs text-slate-400">
+              {status ?? (relTime(lastSynced) ? `Synced ${relTime(lastSynced)}` : "Not synced yet")}
+            </p>
           </div>
         </aside>
 

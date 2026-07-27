@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Lecture, type Transcript, type TranscriptSegment, type Course } from "../api.js";
-import { Card, PageHeader, Button, Badge, EmptyState, Spinner } from "../ui.js";
+import { Card, PageHeader, Button, Badge, EmptyState, Loading, Spinner } from "../ui.js";
 import { courseColor } from "../colors.js";
 
 export function Lectures() {
   const [lectures, setLectures] = useState<Lecture[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   async function load() {
     const [l, c] = await Promise.all([api.lectures(), api.courses()]);
     setLectures(l);
     setCourses(c);
     setSelected((cur) => cur ?? l.find((x) => x.has_text)?.id ?? l[0]?.id ?? null);
+    setLoading(false);
   }
   useEffect(() => {
     load();
@@ -41,7 +43,8 @@ export function Lectures() {
         subtitle={total ? `${done} of ${total} transcribed across ${groups.length} course${groups.length > 1 ? "s" : ""}` : "Your current courses' lectures"}
         actions={<UploadButton courses={courses} onDone={load} />}
       />
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[22rem_1fr]">
+      {loading && <Loading label="Loading lectures…" />}
+      <div className={`grid grid-cols-1 gap-6 lg:grid-cols-[22rem_1fr] ${loading ? "hidden" : ""}`}>
         <div className="space-y-5">
           {groups.length === 0 ? (
             <EmptyState icon="🎧">No lectures yet — connect Echo360 or upload a recording.</EmptyState>

@@ -1,17 +1,21 @@
 import { useEffect, useState } from "react";
 import { api, type Assignment } from "../api.js";
 import { Markdown } from "../Markdown.js";
-import { Card, PageHeader, Button, EmptyState, Spinner } from "../ui.js";
+import { Card, PageHeader, Button, EmptyState, Loading, Spinner } from "../ui.js";
 
 export function Assistant() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    api.assignments().then((a) => {
-      setAssignments(a);
-      if (a[0]) setSelected(a[0].id);
-    }).catch(() => {});
+    api.assignments()
+      .then((a) => {
+        setAssignments(a);
+        if (a[0]) setSelected(a[0].id);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
   const current = assignments.find((a) => a.id === selected) ?? null;
@@ -27,7 +31,9 @@ export function Assistant() {
         </p>
       </Card>
 
-      {assignments.length === 0 ? (
+      {loading ? (
+        <Loading />
+      ) : assignments.length === 0 ? (
         <EmptyState icon="✍️">No assignments yet — Sync Moodle.</EmptyState>
       ) : (
         <>

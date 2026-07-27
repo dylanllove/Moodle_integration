@@ -11,6 +11,7 @@ export async function registerSettingsRoutes(app: FastifyInstance): Promise<void
     // Report whether keys are configured, without exposing them.
     out.has_api_key = process.env.OPENAI_API_KEY ? "true" : "false";
     out.has_moodle_token = process.env.MOODLE_TOKEN && process.env.MOODLE_URL ? "true" : "false";
+    out.last_synced = getSetting("last_synced");
     return out;
   });
 

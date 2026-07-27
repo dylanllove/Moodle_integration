@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type CalEvent, type Course } from "../api.js";
 import { courseColor } from "../colors.js";
-import { Card, PageHeader, Button, Badge, EmptyState, dueMeta } from "../ui.js";
+import { Card, PageHeader, Button, Badge, EmptyState, Loading, dueMeta } from "../ui.js";
 
 type View = "month" | "agenda";
 
@@ -22,12 +22,15 @@ export function Calendar() {
   const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string>(dayKey(new Date()));
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    Promise.all([api.events(), api.courses()]).then(([e, c]) => {
-      setEvents(e);
-      setCourses(c);
-    });
+    Promise.all([api.events(), api.courses()])
+      .then(([e, c]) => {
+        setEvents(e);
+        setCourses(c);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   const courseCode = (id: string | null) => courses.find((c) => c.id === id)?.code ?? "General";
@@ -95,7 +98,9 @@ export function Calendar() {
         </div>
       </div>
 
-      {events.length === 0 ? (
+      {loading ? (
+        <Loading />
+      ) : events.length === 0 ? (
         <EmptyState icon="📅">No events yet — Sync Moodle.</EmptyState>
       ) : view === "month" ? (
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_20rem]">

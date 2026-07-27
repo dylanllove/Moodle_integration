@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type CalEvent, type Course } from "../api.js";
-import { Card, PageHeader, Button, Badge, EmptyState, dueMeta } from "../ui.js";
+import { Card, PageHeader, Button, Badge, EmptyState, Loading, dueMeta } from "../ui.js";
 import { courseColor } from "../colors.js";
 
 export function Dashboard() {
@@ -9,6 +9,7 @@ export function Dashboard() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [reminderDays, setReminderDays] = useState(3);
   const [gcal, setGcal] = useState({ configured: false, connected: false });
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const now = new Date();
@@ -18,12 +19,14 @@ export function Dashboard() {
       api.courses(),
       api.reminderDays(),
       api.gcalStatus().catch(() => ({ configured: false, connected: false })),
-    ]).then(([e, c, r, g]) => {
-      setEvents(e);
-      setCourses(c);
-      setReminderDays(r.days);
-      setGcal(g);
-    });
+    ])
+      .then(([e, c, r, g]) => {
+        setEvents(e);
+        setCourses(c);
+        setReminderDays(r.days);
+        setGcal(g);
+      })
+      .finally(() => setLoading(false));
   }, []);
 
   const courseCode = (id: string | null) => courses.find((c) => c.id === id)?.code ?? "General";
@@ -49,6 +52,9 @@ export function Dashboard() {
         title={greeting()}
         subtitle={new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
       />
+
+      {loading && <Loading label="Loading your dashboard…" />}
+      <div className={loading ? "hidden" : ""}>
 
       {/* Today's timetable */}
       <Card className="mb-6 p-5">
@@ -155,6 +161,7 @@ export function Dashboard() {
           })}
         </div>
       )}
+      </div>
     </div>
   );
 }

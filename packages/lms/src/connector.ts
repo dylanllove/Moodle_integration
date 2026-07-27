@@ -1,4 +1,4 @@
-import { getDb, getSetting } from "@uni/db";
+import { getDb, getSetting, setSetting } from "@uni/db";
 import { openContext, looksLoggedIn, detectLms } from "./session.js";
 import { scrapeMoodle, type ScrapeCounts } from "./moodle.js";
 import { scrapeBlackboard } from "./blackboard.js";
@@ -64,6 +64,7 @@ export async function sync(): Promise<SyncResult> {
       const ical = getSetting("ical_url") ? await syncIcal() : { events: 0 };
       // Pull the class timetable (configured URL/path, or an auto-detected .ics).
       const tt = await syncTimetable().catch(() => ({ classes: 0 }));
+      setSetting("last_synced", new Date().toISOString());
       return {
         ok: true,
         counts: {

@@ -1,16 +1,18 @@
 import { useEffect, useState } from "react";
 import { api, type Note } from "../api.js";
 import { Markdown } from "../Markdown.js";
-import { Card, PageHeader, Button, Badge, EmptyState } from "../ui.js";
+import { Card, PageHeader, Button, Badge, EmptyState, Loading } from "../ui.js";
 
 export function Notes() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   async function refresh() {
     const n = await api.notes();
     setNotes(n);
     setSelected((cur) => cur ?? n[0]?.id ?? null);
+    setLoading(false);
   }
   useEffect(() => {
     refresh();
@@ -29,7 +31,8 @@ export function Notes() {
         subtitle="Your notes & AI-generated cheat sheets"
         actions={<Button variant="primary" onClick={newNote}>+ New note</Button>}
       />
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[18rem_1fr]">
+      {loading && <Loading label="Loading notes…" />}
+      <div className={`grid grid-cols-1 gap-6 lg:grid-cols-[18rem_1fr] ${loading ? "hidden" : ""}`}>
         <div className="space-y-1.5">
           {notes.length === 0 ? (
             <EmptyState icon="📝">No notes yet. Generate a cheat sheet from Courses, or add one.</EmptyState>

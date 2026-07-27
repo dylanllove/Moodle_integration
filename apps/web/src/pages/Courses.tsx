@@ -1,17 +1,19 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type Course } from "../api.js";
-import { Card, PageHeader, Button, Badge, EmptyState } from "../ui.js";
+import { Card, PageHeader, Button, Badge, EmptyState, Loading } from "../ui.js";
 import { courseColor } from "../colors.js";
 
 export function Courses() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const nav = useNavigate();
 
   async function load(all: boolean) {
     setCourses(await api.courses(all));
+    setLoading(false);
   }
   useEffect(() => {
     load(showAll);
@@ -49,7 +51,9 @@ export function Courses() {
         }
       />
 
-      {courses.length === 0 ? (
+      {loading ? (
+        <Loading />
+      ) : courses.length === 0 ? (
         <EmptyState icon="📚">No courses yet — hit Sync Moodle.</EmptyState>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

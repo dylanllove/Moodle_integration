@@ -86,6 +86,18 @@ export function Spinner({ label }: { label?: string }) {
   );
 }
 
+/** Centered loading state for a page's initial data fetch. */
+export function Loading({ label = "Loading…" }: { label?: string }) {
+  return (
+    <div className="flex items-center justify-center py-24">
+      <span className="inline-flex items-center gap-3 text-sm text-slate-400">
+        <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-200 border-t-indigo-500" />
+        {label}
+      </span>
+    </div>
+  );
+}
+
 export function EmptyState({ icon, children }: { icon: string; children: ReactNode }) {
   return (
     <div className="rounded-2xl border border-dashed border-slate-300 bg-white/50 p-12 text-center">
