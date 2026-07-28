@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { getDb } from "@uni/db";
-import { complete, hasApiKey, MODEL_FAST } from "@uni/ai";
+import { complete, hasApiKey, retrieve, MODEL_FAST } from "@uni/ai";
 
 export async function registerAskRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: { question: string; history?: { role: string; content: string }[] } }>(
@@ -11,6 +11,11 @@ export async function registerAskRoutes(app: FastifyInstance): Promise<void> {
       if (!question) return reply.code(400).send({ error: "empty question" });
 
       const context = buildContext();
+      // Pull the most relevant lecture/slide/note content for this question.
+      const chunks = retrieve(question, null, 6);
+      const contentBlock = chunks.length
+        ? chunks.map((c, i) => `[${i + 1}] ${c.text}`).join("\n\n")
+        : "(no matching lecture/course content indexed yet)";
       const history = (req.body.history ?? [])
         .slice(-4)
         .map((m) => `${m.role === "user" ? "Q" : "A"}: ${m.content}`)
@@ -20,17 +25,16 @@ export async function registerAskRoutes(app: FastifyInstance): Promise<void> {
         `${history ? `Earlier in this chat:\n${history}\n\n` : ""}Question: ${question}`,
         {
           system:
-            "You are a concise study assistant with access to the student's own university data below. " +
-            "Answer ONLY from this data, briefly and directly (a sentence or a short list).\n" +
-            "IMPORTANT about attendance: lectures at this university are recorded on Echo360 and are generally OPTIONAL to attend. " +
-            "Do NOT call a class compulsory just because it has a room or appears in the timetable. " +
-            "A class is only mandatory if the COURSE NOTES (from the Learn page/announcements) explicitly say attendance is required/compulsory/mandatory. " +
-            "When asked what's compulsory or what must be attended in person, rely on COURSE NOTES; if nothing there requires attendance, say lectures/classes are generally optional (recorded on Echo360) and point them to the course page to confirm. " +
-            "If the data doesn't contain the answer, say so and suggest a Sync.\n\n" +
-            `DATA:\n${context}`,
+            "You are the student's study assistant and tutor, with access to their own university data below. " +
+            "Answer from this data. For **logistics** questions (deadlines, timetable, what's due, where/when a class is) be brief and direct. " +
+            "For **content/learning** questions (explain X, quiz me, what did the lecturer say about Y), teach clearly using COURSE CONTENT — explain in plain language, give examples, and offer to quiz them. " +
+            "Surface lecturer exam hints when relevant. Ground answers in the material; if it isn't there, say so and suggest a Sync.\n" +
+            "ATTENDANCE: lectures are recorded on Echo360 and generally OPTIONAL — never call a class compulsory just because it's timetabled or has a room; only if COURSE NOTES explicitly require attendance.\n\n" +
+            `=== STRUCTURE (courses, schedule, assignments) ===\n${context}\n\n` +
+            `=== COURSE CONTENT (relevant excerpts from lectures/slides/notes/announcements) ===\n${contentBlock}`,
           model: MODEL_FAST,
-          maxTokens: 700,
-          temperature: 0.2,
+          maxTokens: 900,
+          temperature: 0.3,
         },
       );
       return { answer };

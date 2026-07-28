@@ -2,7 +2,7 @@ import { getDb, type Lecture } from "@uni/db";
 import { resolveAudio } from "./download.js";
 import { probeDuration } from "./ffmpeg.js";
 import { transcribeFile } from "./openai-transcribe.js";
-import { cleanTranscript } from "@uni/ai";
+import { cleanTranscript, lectureNotes } from "@uni/ai";
 
 type Status = "pending" | "downloading" | "transcribing" | "done" | "error";
 
@@ -55,6 +55,10 @@ async function processOne(lectureId: string): Promise<void> {
   const clean = await cleanTranscript(text).catch(() => text);
 
   setStatus(lectureId, "done", { text: clean, segments, error: null });
+
+  // Study-ready notes so the student can learn the lecture fast.
+  const summary = await lectureNotes(clean, lecture.title).catch(() => null);
+  if (summary) getDb().prepare("UPDATE transcripts SET summary = ? WHERE lecture_id = ?").run(summary, lectureId);
 }
 
 function setStatus(

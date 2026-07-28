@@ -98,6 +98,38 @@ function splitWords(text: string, maxWords: number): string[] {
   return out;
 }
 
+/**
+ * Turn one lecture (transcript or slide text) into tight, study-ready notes so a
+ * student can learn the lecture in a few minutes instead of re-reading it all.
+ */
+export function lectureNotes(content: string, title?: string): Promise<string> {
+  return complete(
+    `Below is the content of a single lecture${title ? ` ("${title}")` : ""} — a transcript or slide text. Produce concise STUDY NOTES in markdown that let me learn this lecture in ~5 minutes:
+
+## TL;DR
+2–3 sentences on what this lecture was about.
+
+## Key concepts
+Each as a bullet: the concept in **bold**, then a one-line plain-English explanation.
+
+## Key terms
+Any definitions/terminology worth knowing (skip if none).
+
+## ⭐ Likely exam / emphasis
+Anything the lecturer stressed, repeated, or flagged as important or testable (e.g. "this will be on the exam", "make sure you know…"). Quote the hint briefly. If none are evident, say "None flagged explicitly."
+
+## Test yourself
+3–5 short questions (no answers) covering the most important points.
+
+Base everything ONLY on the material below — do not invent. Be tight and skimmable.\n\nLECTURE CONTENT:\n${clamp(content, 90_000)}`,
+    {
+      system: "You produce accurate, concise lecture study notes. You never add facts not present in the material.",
+      model: MODEL_FAST,
+      maxTokens: 1800,
+    },
+  );
+}
+
 export interface Flashcard {
   q: string;
   a: string;

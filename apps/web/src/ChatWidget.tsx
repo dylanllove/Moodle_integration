@@ -8,10 +8,10 @@ interface Msg {
 }
 
 const SUGGESTIONS = [
-  "Which of my classes are compulsory?",
-  "What do I have to physically attend on campus?",
   "What's due this week?",
-  "Where and when is my next COSC121 class?",
+  "Explain the key idea from my last MGMT244 lecture",
+  "Quiz me on this week's material",
+  "What did the lecturer say is important for the exam?",
 ];
 
 export function ChatWidget() {
@@ -55,8 +55,8 @@ export function ChatWidget() {
       {open && (
         <div className="fixed bottom-24 right-6 z-50 flex h-[32rem] w-[24rem] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
           <div className="border-b border-slate-200 px-4 py-3">
-            <div className="text-sm font-semibold text-slate-900">Ask about your study</div>
-            <div className="text-xs text-slate-400">Quick questions across your courses</div>
+            <div className="text-sm font-semibold text-slate-900">Study assistant</div>
+            <div className="text-xs text-slate-400">Ask about your schedule or your course content</div>
           </div>
 
           <div className="flex-1 space-y-3 overflow-y-auto px-4 py-3">

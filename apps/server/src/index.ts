@@ -79,6 +79,12 @@ async function autoSyncOnLaunch(app: import("fastify").FastifyInstance): Promise
     app.log.info("Auto-sync starting…");
     const r = await sync();
     app.log.info({ counts: (r as { counts?: unknown }).counts }, "Auto-sync done");
+    try {
+      const { indexAll } = await import("@uni/ai");
+      indexAll();
+    } catch {
+      /* non-fatal */
+    }
     // Push to Google Calendar if connected.
     const { pushToGoogleCalendar, googleConnected } = await import("./google.js");
     if (googleConnected()) await pushToGoogleCalendar().catch((e) => app.log.warn(String(e)));

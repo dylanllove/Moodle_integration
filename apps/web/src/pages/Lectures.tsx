@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Lecture, type Transcript, type TranscriptSegment, type Course } from "../api.js";
 import { Card, PageHeader, Button, Badge, EmptyState, Loading, Spinner } from "../ui.js";
+import { Markdown } from "../Markdown.js";
 import { courseColor } from "../colors.js";
 
 export function Lectures() {
@@ -134,7 +135,8 @@ function UploadButton({ courses, onDone }: { courses: Course[]; onDone: () => vo
 function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
   const [lecture, setLecture] = useState<Lecture | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
-  const [showStamps, setShowStamps] = useState(false);
+  const [tab, setTab] = useState<"notes" | "transcript" | "timestamps">("notes");
+  const [notesBusy, setNotesBusy] = useState(false);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function loadOne() {
@@ -143,9 +145,19 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
     setTranscript(transcript);
     return transcript?.status;
   }
+
+  async function makeNotes() {
+    setNotesBusy(true);
+    try {
+      await api.lectureNotes(id);
+      await loadOne();
+      setTab("notes");
+    } finally {
+      setNotesBusy(false);
+    }
+  }
   useEffect(() => {
-    setShowStamps(false);
-    loadOne();
+    loadOne().then((s) => setTab(s === "done" ? "notes" : "transcript"));
     return () => {
       if (poll.current) clearInterval(poll.current);
     };
@@ -170,7 +182,10 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
   const noRecording = status === "no_recording";
   const segments: TranscriptSegment[] = transcript?.segments ? JSON.parse(transcript.segments) : [];
   const isSlides = lecture.provider === "slides";
+  const done = status === "done" && !!transcript?.text;
   const paragraphs = (transcript?.text ?? "").split(/\n{2,}/).filter((p) => p.trim());
+  const hasNotes = !!transcript?.summary;
+  const effectiveTab = tab === "timestamps" && segments.length === 0 ? "transcript" : tab;
 
   return (
     <Card className="p-6">
@@ -179,53 +194,88 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
           <h2 className="text-lg font-semibold text-slate-900">{lecture.title}</h2>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <Badge tone={isSlides ? "indigo" : "neutral"}>{lecture.provider}</Badge>
-            {status === "done" && <Badge tone="green">transcribed</Badge>}
+            {done && <Badge tone="green">transcribed</Badge>}
             {noRecording && <Badge tone="amber">no recording yet</Badge>}
           </div>
         </div>
         <div className="flex flex-wrap justify-end gap-2">
-          {segments.length > 0 && (
-            <Button size="sm" variant="ghost" onClick={() => setShowStamps((s) => !s)}>
-              {showStamps ? "Reading view" : "Timestamps"}
-            </Button>
-          )}
-          {status === "done" && (
+          {done && (
             <a href={`/api/export/lecture/${encodeURIComponent(id)}`} download>
               <Button size="sm">Download .md</Button>
             </a>
           )}
           <Button size="sm" variant="primary" disabled={busy} onClick={process}>
-            {busy ? "Working…" : status === "done" ? "Re-process" : isSlides ? "Extract text" : "Transcribe"}
+            {busy ? "Working…" : done ? "Re-process" : isSlides ? "Extract text" : "Transcribe"}
           </Button>
         </div>
       </div>
 
-      {busy && <Spinner label={status === "transcribing" ? "Transcribing & cleaning…" : "Downloading…"} />}
+      {busy && <Spinner label={status === "transcribing" ? "Transcribing & writing notes…" : "Downloading…"} />}
       {status === "error" && <p className="text-sm text-rose-600">Error: {transcript?.error}</p>}
 
-      {!busy && transcript?.text ? (
-        showStamps && segments.length > 0 ? (
-          <div className="max-h-[64vh] space-y-1.5 overflow-y-auto rounded-xl bg-slate-50 p-4 text-sm leading-relaxed text-slate-700">
-            {segments.map((s, i) => (
-              <p key={i}>
-                <span className="mr-2 select-none font-mono text-xs text-slate-400">{fmt(s.start)}</span>
-                {s.text}
-              </p>
-            ))}
+      {done && (
+        <>
+          {/* Tabs */}
+          <div className="mb-4 flex gap-1 border-b border-slate-200">
+            {([["notes", "📝 Study notes"], ["transcript", "Transcript"], ...(segments.length ? [["timestamps", "Timestamps"]] : [])] as [string, string][]).map(
+              ([k, label]) => (
+                <button
+                  key={k}
+                  onClick={() => setTab(k as typeof tab)}
+                  className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${
+                    effectiveTab === k
+                      ? "border-indigo-600 text-indigo-700"
+                      : "border-transparent text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  {label}
+                </button>
+              ),
+            )}
           </div>
-        ) : (
-          <div className="max-h-[64vh] space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-5 text-[15px] leading-7 text-slate-700">
-            {paragraphs.map((p, i) => (
-              <p key={i}>{p}</p>
+
+          {effectiveTab === "notes" &&
+            (hasNotes ? (
+              <div className="max-h-[64vh] overflow-y-auto rounded-xl bg-slate-50 p-5">
+                <Markdown>{transcript!.summary!}</Markdown>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center">
+                <p className="mb-3 text-sm text-slate-500">Turn this lecture into quick study notes.</p>
+                <Button variant="primary" disabled={notesBusy} onClick={makeNotes}>
+                  {notesBusy ? "Writing notes…" : "✨ Generate study notes"}
+                </Button>
+              </div>
             ))}
-          </div>
-        )
-      ) : noRecording ? (
+
+          {effectiveTab === "transcript" && (
+            <div className="max-h-[64vh] space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-5 text-[15px] leading-7 text-slate-700">
+              {paragraphs.map((p, i) => (
+                <p key={i}>{p}</p>
+              ))}
+            </div>
+          )}
+
+          {effectiveTab === "timestamps" && (
+            <div className="max-h-[64vh] space-y-1.5 overflow-y-auto rounded-xl bg-slate-50 p-4 text-sm leading-relaxed text-slate-700">
+              {segments.map((s, i) => (
+                <p key={i}>
+                  <span className="mr-2 select-none font-mono text-xs text-slate-400">{fmt(s.start)}</span>
+                  {s.text}
+                </p>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {noRecording && (
         <p className="text-sm text-slate-500">
           This class hasn't been recorded/published yet. It'll transcribe automatically once the recording appears.
         </p>
-      ) : (
-        !busy && <p className="text-sm text-slate-400">Not processed yet — click {isSlides ? "Extract text" : "Transcribe"}.</p>
+      )}
+      {!busy && !done && !noRecording && (
+        <p className="text-sm text-slate-400">Not processed yet — click {isSlides ? "Extract text" : "Transcribe"}.</p>
       )}
     </Card>
   );

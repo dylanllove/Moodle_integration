@@ -50,6 +50,7 @@ function migrate(db: DatabaseSync): void {
   add("assignments", "open_at", "TEXT");
   add("events", "location", "TEXT");
   add("events", "notes", "TEXT");
+  add("transcripts", "summary", "TEXT");
 }
 
 /** Simple key/value settings helpers. */

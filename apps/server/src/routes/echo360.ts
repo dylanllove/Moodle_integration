@@ -13,7 +13,8 @@ import {
   withEchoLock,
 } from "@uni/lms";
 import { extractAudioMp3, transcribeFile } from "@uni/transcribe";
-import { cleanTranscript } from "@uni/ai";
+import { cleanTranscript, indexAll } from "@uni/ai";
+import { generateLectureNotes } from "../notes-gen.js";
 
 interface Section {
   sectionId: string;
@@ -135,6 +136,11 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
     } catch (e) {
       app.log.error(`Echo360 sync: ${String(e)}`);
     }
+    try {
+      indexAll();
+    } catch {
+      /* non-fatal */
+    }
     // Note: do NOT close ctx — it's the live login window we reuse.
     return { ok: true, counts };
     });
@@ -193,6 +199,7 @@ async function processLesson(
   db.prepare(
     `UPDATE transcripts SET status='done', text=?, segments=?, error=NULL, updated_at=datetime('now') WHERE lecture_id=?`,
   ).run(clean, JSON.stringify(segments), lectureId);
-  app.log.info(`Echo360 ${lessonId}: transcribed + cleaned audio`);
+  await generateLectureNotes(lectureId);
+  app.log.info(`Echo360 ${lessonId}: transcribed + cleaned + noted`);
   return "transcribed";
 }

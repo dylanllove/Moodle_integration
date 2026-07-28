@@ -6,6 +6,7 @@ import { enqueue, queueState, extractAudioMp3, transcribeFile } from "@uni/trans
 import { getDb, dataDir } from "@uni/db";
 import { cleanTranscript } from "@uni/ai";
 import { extractSlideText } from "../extract.js";
+import { generateLectureNotes } from "../notes-gen.js";
 
 export async function registerTranscribeRoutes(app: FastifyInstance): Promise<void> {
   const db = getDb();
@@ -30,6 +31,7 @@ export async function registerTranscribeRoutes(app: FastifyInstance): Promise<vo
       try {
         const text = await extractSlideText(lecture.media_url);
         setDone(db, lecture.id, text || "(no extractable text in this file)");
+        await generateLectureNotes(lecture.id);
         return { ok: true, mode: "slides" };
       } catch (e) {
         setError(db, lecture.id, String(e));
@@ -67,6 +69,7 @@ export async function registerTranscribeRoutes(app: FastifyInstance): Promise<vo
         `INSERT INTO transcripts (id, lecture_id, status, text, segments) VALUES (?,?,?,?,?)
          ON CONFLICT(lecture_id) DO UPDATE SET status='done', text=excluded.text, segments=excluded.segments, updated_at=datetime('now')`,
       ).run("tr:" + lectureId, lectureId, "done", clean, JSON.stringify(segments));
+      await generateLectureNotes(lectureId);
       return { ok: true, lecture_id: lectureId };
     } catch (e) {
       setError(db, lectureId, String(e));
@@ -77,6 +80,17 @@ export async function registerTranscribeRoutes(app: FastifyInstance): Promise<vo
   app.get("/api/transcribe/status", async () => {
     const rows = db.prepare("SELECT lecture_id, status, error FROM transcripts").all();
     return { queue: queueState(), lectures: rows };
+  });
+
+  // (Re)generate the study notes for a lecture that already has a transcript.
+  app.post<{ Params: { id: string } }>("/api/lectures/:id/notes", async (req, reply) => {
+    const t = db
+      .prepare("SELECT status FROM transcripts WHERE lecture_id = ?")
+      .get(req.params.id) as { status: string } | undefined;
+    if (t?.status !== "done") return reply.code(400).send({ error: "no transcript to summarise yet" });
+    await generateLectureNotes(req.params.id);
+    const row = db.prepare("SELECT summary FROM transcripts WHERE lecture_id = ?").get(req.params.id);
+    return { ok: true, ...(row as object) };
   });
 }
 

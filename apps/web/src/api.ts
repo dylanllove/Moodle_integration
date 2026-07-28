@@ -86,6 +86,7 @@ export interface Transcript {
   status: "pending" | "downloading" | "transcribing" | "done" | "error" | "no_recording";
   text: string | null;
   segments: string | null;
+  summary: string | null;
   error: string | null;
 }
 
@@ -183,6 +184,8 @@ export const api = {
     req<{ ok: boolean; mode?: string; alreadyDone?: boolean }>(`/lectures/${id}/transcribe`, {
       method: "POST",
     }),
+  lectureNotes: (id: string) =>
+    req<{ ok: boolean; summary: string | null }>(`/lectures/${id}/notes`, { method: "POST" }),
   outline: (assignment_id: string) =>
     req<{ markdown: string }>("/ai/outline", {
       method: "POST",

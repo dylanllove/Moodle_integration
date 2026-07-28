@@ -33,6 +33,12 @@ export function indexAll(): { chunks: number } {
     .all() as { id: string; course_id: string | null; text: string }[];
   for (const t of transcripts) addChunks("transcript", t.id, t.course_id, t.text);
 
+  // Course prose (forum posts, labels, section summaries) — logistics + content.
+  const texts = db
+    .prepare("SELECT id, course_id, title, body FROM course_text")
+    .all() as { id: string; course_id: string | null; title: string | null; body: string }[];
+  for (const x of texts) addChunks("transcript", x.id, x.course_id, `${x.title ?? ""}\n${x.body}`);
+
   const n = (db.prepare("SELECT COUNT(*) c FROM chunks").get() as { c: number }).c;
   return { chunks: n };
 }
