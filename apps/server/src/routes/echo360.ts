@@ -6,7 +6,9 @@ import {
   loginEcho360,
   echoConnected,
   echoVerify,
-  activeEchoContext,
+  acquireEchoContext,
+  persistEchoSession,
+  clearEchoSession,
   listLessons,
   fetchTranscript,
   sniffAudioManifest,
@@ -79,20 +81,27 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
     const secs = sections();
     if (!secs.length) return reply.code(400).send({ error: "No Echo360 sections configured." });
 
-    const ctx = activeEchoContext();
-    if (!ctx)
+    if (!echoConnected())
       return reply
         .code(400)
-        .send({ error: "Echo360 window isn't open — click Connect Echo360, log in, and keep the window open." });
+        .send({ error: "Not connected to Echo360 — click Connect Echo360 and log in once." });
 
     const counts = { lessons: 0, transcribed: 0, noRecording: 0, failed: 0 };
+    let expired = false;
     return withEchoLock(async () => {
+    const acquired = await acquireEchoContext().catch(() => null);
+    if (!acquired) return reply.code(400).send({ error: "Not connected to Echo360." });
+    const { ctx, done: cleanup } = acquired;
     try {
       for (const sec of secs) {
         let lessons;
         try {
           lessons = await listLessons(ctx, sec.sectionId);
         } catch (e) {
+          if (String(e).includes("ECHO_SESSION_EXPIRED")) {
+            expired = true;
+            break;
+          }
           app.log.warn(`Echo360 section ${sec.sectionId}: ${String(e)}`);
           continue;
         }
@@ -135,13 +144,23 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
       }
     } catch (e) {
       app.log.error(`Echo360 sync: ${String(e)}`);
+    } finally {
+      // Refresh the saved session (tokens may have rotated), then clean up.
+      await persistEchoSession(ctx).catch(() => {});
+      await cleanup();
+    }
+
+    if (expired) {
+      clearEchoSession();
+      return reply
+        .code(401)
+        .send({ error: "Your Echo360 session has expired — click Connect Echo360 to log in again." });
     }
     try {
       indexAll();
     } catch {
       /* non-fatal */
     }
-    // Note: do NOT close ctx — it's the live login window we reuse.
     return { ok: true, counts };
     });
   });
@@ -149,9 +168,11 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
 
 type LessonResult = "transcribed" | "no_recording";
 
+type EchoCtx = Awaited<ReturnType<typeof acquireEchoContext>>["ctx"];
+
 async function processLesson(
   app: FastifyInstance,
-  ctx: NonNullable<ReturnType<typeof activeEchoContext>>,
+  ctx: EchoCtx,
   lectureId: string,
   lessonId: string,
   mediaId: string | null,

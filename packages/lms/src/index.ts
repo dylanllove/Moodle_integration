@@ -14,8 +14,10 @@ export {
 export { openContext, profileDir } from "./session.js";
 export type { ScrapeCounts } from "./moodle.js";
 export {
-  openEchoContext,
-  activeEchoContext,
+  acquireEchoContext,
+  persistEchoSession,
+  clearEchoSession,
+  echoHasSession,
   echoConnected,
   echoVerify,
   loginEcho360,

@@ -1,14 +1,17 @@
-import type { BrowserContext, Page } from "playwright";
-import { getSetting, setSetting } from "@uni/db";
+import { chromium, type BrowserContext, type Page } from "playwright";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { dataDir } from "@uni/db";
 import { openContext } from "./session.js";
 
 const PROFILE = ".echo360-profile";
 const ORIGIN = "https://echo360.net.au";
 const CONTENT_RE = /content\.echo360\.[^/]+\/.+\.m3u8/i;
+const STATE_FILE = () => join(dataDir(), "echo-state.json");
 
-// Echo360 is a token-based SPA whose session does NOT survive a fresh headless
-// browser launch (nothing useful persists to the profile on disk). So we keep
-// the logged-in browser alive in `loginCtx` and run every operation through it.
+// The headed login window (kept alive while open). Once the user has logged in
+// we persist the session (cookies + localStorage) to STATE_FILE via
+// `storageState`, so future launches can reuse it headlessly with no re-login.
 let loginCtx: BrowserContext | null = null;
 let lock: Promise<unknown> = Promise.resolve();
 
@@ -30,23 +33,47 @@ export interface AudioManifest {
   headers: Record<string, string>;
 }
 
-export function openEchoContext(headless: boolean): Promise<BrowserContext> {
-  return openContext(headless, PROFILE);
+export function echoHasSession(): boolean {
+  return existsSync(STATE_FILE());
 }
 
-/** The live authenticated context, or null if the login window isn't open. */
-export function activeEchoContext(): BrowserContext | null {
-  return loginCtx;
-}
-
-/** Fast, no-launch status flag (set by verify/sync). */
+/** Connected if a login window is open OR we have a saved session to reuse. */
 export function echoConnected(): boolean {
-  return getSetting("echo360_connected") === "true" && loginCtx != null;
+  return loginCtx != null || echoHasSession();
+}
+
+export function clearEchoSession(): void {
+  try {
+    if (existsSync(STATE_FILE())) rmSync(STATE_FILE());
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Save the current session so it survives restarts. */
+export async function persistEchoSession(ctx: BrowserContext): Promise<void> {
+  await ctx.storageState({ path: STATE_FILE() }).catch(() => {});
 }
 
 /**
- * Open a real browser window at Echo360 for login and return immediately. The
- * user logs in and LEAVES THE WINDOW OPEN — the live context is what we use.
+ * Get a context to run Echo operations. Prefers the live login window; otherwise
+ * builds a headless context from the saved session. `done()` cleans up.
+ */
+export async function acquireEchoContext(): Promise<{
+  ctx: BrowserContext;
+  done: () => Promise<void>;
+  live: boolean;
+}> {
+  if (loginCtx) return { ctx: loginCtx, done: async () => {}, live: true };
+  if (!echoHasSession()) throw new Error("Not connected to Echo360.");
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  const ctx = await browser.newContext({ storageState: STATE_FILE() });
+  return { ctx, done: async () => void (await browser.close().catch(() => {})), live: false };
+}
+
+/**
+ * Open a real browser window at Echo360 for login; returns immediately. The user
+ * logs in and keeps it open long enough for us to save the session.
  */
 export async function loginEcho360(): Promise<{ ok: boolean; error?: string }> {
   try {
@@ -54,11 +81,10 @@ export async function loginEcho360(): Promise<{ ok: boolean; error?: string }> {
       await loginCtx.close().catch(() => {});
       loginCtx = null;
     }
-    const ctx = await openEchoContext(false);
+    const ctx = await openContext(false, PROFILE);
     loginCtx = ctx;
     ctx.on("close", () => {
       if (loginCtx === ctx) loginCtx = null;
-      setSetting("echo360_connected", "false");
     });
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     await page.goto(`${ORIGIN}/`, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => {});
@@ -68,14 +94,14 @@ export async function loginEcho360(): Promise<{ ok: boolean; error?: string }> {
   }
 }
 
-/** Confirm the live window is actually logged in (not on the SSO login page). */
+/** Confirm login, and if good, persist the session for future launches. */
 export async function echoVerify(): Promise<{ connected: boolean; error?: string }> {
   if (!loginCtx) return { connected: false, error: "Click Connect Echo360 first, and keep that window open." };
   try {
     const page = loginCtx.pages()[0] ?? (await loginCtx.newPage());
     await page.goto(`${ORIGIN}/`, { waitUntil: "networkidle", timeout: 30000 }).catch(() => {});
     const ok = !/login\.echo360|\/login/i.test(page.url());
-    setSetting("echo360_connected", ok ? "true" : "false");
+    if (ok) await persistEchoSession(loginCtx);
     return { connected: ok, error: ok ? undefined : "Not logged in yet — finish logging in, then try again." };
   } catch (e) {
     return { connected: false, error: String(e) };
@@ -83,9 +109,8 @@ export async function echoVerify(): Promise<{ connected: boolean; error?: string
 }
 
 /**
- * List a section's lessons by loading its (authenticated) home page and
- * capturing whatever JSON the app fetches — no guessing the endpoint. Logs the
- * endpoints it saw for diagnostics.
+ * List a section's lessons by loading its authenticated home page and capturing
+ * whatever JSON the app fetches. Throws a clear error if the session has expired.
  */
 export async function listLessons(ctx: BrowserContext, sectionId: string): Promise<EchoLesson[]> {
   const page = await ctx.newPage();
@@ -97,30 +122,23 @@ export async function listLessons(ctx: BrowserContext, sectionId: string): Promi
     try {
       captured.push({ url: u, body: await r.json() });
     } catch {
-      /* ignore non-json */
+      /* ignore */
     }
   });
-
   try {
     await page
       .goto(`${ORIGIN}/section/${sectionId}/home`, { waitUntil: "networkidle", timeout: 60000 })
       .catch(() => {});
     await page.waitForTimeout(4000);
     if (/login\.echo360|\/login/i.test(page.url())) {
-      throw new Error("Not authenticated — reconnect and keep the Echo360 window open.");
+      throw new Error("ECHO_SESSION_EXPIRED");
     }
-    // eslint-disable-next-line no-console
-    console.log(
-      `[echo360] section ${sectionId}: captured JSON from ${captured.length} calls: ` +
-        captured.map((c) => c.url.replace(ORIGIN, "")).slice(0, 20).join(" | "),
-    );
     return pickLessons(captured);
   } finally {
     await page.close().catch(() => {});
   }
 }
 
-/** Search captured JSON payloads for the array that looks like a lesson list. */
 function pickLessons(captured: { url: string; body: unknown }[]): EchoLesson[] {
   let best: EchoLesson[] = [];
   const visit = (node: any) => {
@@ -136,7 +154,6 @@ function pickLessons(captured: { url: string; body: unknown }[]): EchoLesson[] {
   return best;
 }
 
-/** Try to interpret an arbitrary object as a lesson (defensive across shapes). */
 function toLesson(item: any): EchoLesson | null {
   if (!item || typeof item !== "object") return null;
   const node = item.lesson?.lesson ?? item.lesson ?? item;
@@ -145,7 +162,6 @@ function toLesson(item: any): EchoLesson | null {
   const medias = item.lesson?.medias ?? item.medias ?? node?.medias ?? node?.video?.medias ?? [];
   const timing = node?.timing ?? item.lesson?.timing ?? {};
   const name = node?.name ?? item?.name ?? node?.title ?? "Lecture";
-  // Only accept nodes that look lesson-ish (have timing or media), to avoid junk.
   if (!timing?.start && !medias?.length && !/lesson/i.test(id)) return null;
   return {
     lessonId: String(id),
@@ -156,7 +172,6 @@ function toLesson(item: any): EchoLesson | null {
   };
 }
 
-/** Fetch an existing Echo360 transcript, or null if none exist. */
 export async function fetchTranscript(
   ctx: BrowserContext,
   lessonId: string,
@@ -199,7 +214,6 @@ function parseTranscript(body: string): string | null {
   return text;
 }
 
-/** Load a lesson's classroom page (authenticated) and sniff its signed HLS manifest. */
 export async function sniffAudioManifest(
   ctx: BrowserContext,
   lessonId: string,

@@ -190,7 +190,7 @@ function Echo360Card() {
       const r = await api.echoLogin();
       setMsg(
         r.ok
-          ? "A browser window opened — log in to Echo360 and LEAVE that window open, then click “I've connected”."
+          ? "A browser window opened — log in to Echo360, then click “I've connected” to save your session (you can close the window after)."
           : `Couldn't open the login window: ${r.error}`,
       );
     } catch (e) {
@@ -251,9 +251,9 @@ function Echo360Card() {
         {connected ? <Badge tone="green">connected</Badge> : <Badge tone="amber">not connected</Badge>}
       </div>
       <p className="mb-4 text-xs leading-relaxed text-slate-500">
-        Auto-downloads and transcribes your lecture recordings, then feeds them into cheat sheets.
-        Connect, log in, and <strong>keep that browser window open</strong>. Transcribing starts
-        automatically once connected.
+        Connect and log in <strong>once</strong> — your session is saved, so new lecture recordings
+        <strong> auto-download and transcribe every time the app launches</strong>, with no re-login.
+        If Echo eventually signs you out, just reconnect.
       </p>
 
       <div className="mb-4 flex flex-wrap gap-2">
