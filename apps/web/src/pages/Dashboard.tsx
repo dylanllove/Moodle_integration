@@ -1,14 +1,27 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, type CalEvent, type Course } from "../api.js";
-import { Card, PageHeader, Button, Badge, EmptyState, Loading, dueMeta } from "../ui.js";
+import {
+  Card,
+  PageHeader,
+  Button,
+  Badge,
+  Chip,
+  PanelFrame,
+  Reveal,
+  EmptyState,
+  Loading,
+  dueMeta,
+} from "../ui.js";
 import { courseColor } from "../colors.js";
+
+/** How many deadlines the dashboard shows before deferring to the calendar. */
+const DEADLINE_LIMIT = 5;
 
 export function Dashboard() {
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [reminderDays, setReminderDays] = useState(3);
-  const [gcal, setGcal] = useState({ configured: false, connected: false });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -18,13 +31,11 @@ export function Dashboard() {
       api.events(now.toISOString(), to.toISOString()),
       api.courses(),
       api.reminderDays(),
-      api.gcalStatus().catch(() => ({ configured: false, connected: false })),
     ])
-      .then(([e, c, r, g]) => {
+      .then(([e, c, r]) => {
         setEvents(e);
         setCourses(c);
         setReminderDays(r.days);
-        setGcal(g);
       })
       .finally(() => setLoading(false));
   }, []);
@@ -39,18 +50,45 @@ export function Dashboard() {
   const todaySchedule = events
     .filter((e) => e.kind === "class" && isToday(e.start_at))
     .sort((a, b) => a.start_at.localeCompare(b.start_at));
+
+  // Real deadlines only. "Opens" dates are calendar detail, not something to
+  // act on today — they live on the Calendar page.
   const deadlines = events
-    .filter((e) => ["deadline", "exam", "open"].includes(e.kind))
+    .filter((e) => e.kind === "deadline" || e.kind === "exam")
     .sort((a, b) => a.start_at.localeCompare(b.start_at));
   const soon = deadlines.filter(
-    (e) => e.kind !== "open" && new Date(e.start_at).getTime() - Date.now() <= reminderDays * 864e5 && new Date(e.start_at) >= new Date(Date.now() - 864e5),
+    (e) =>
+      new Date(e.start_at).getTime() - Date.now() <= reminderDays * 864e5 &&
+      new Date(e.start_at) >= new Date(Date.now() - 864e5),
   );
+
+  const g = greeting();
+  const dateLine = new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+  const nextClass = todaySchedule.find((e) => new Date(e.start_at).getTime() >= Date.now());
+  const shownDeadlines = deadlines.slice(0, DEADLINE_LIMIT);
+  const hiddenCount = deadlines.length - shownDeadlines.length;
 
   return (
     <div>
       <PageHeader
-        title={greeting()}
-        subtitle={new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
+        size="hero"
+        title={
+          <>
+            {g.lead} <span className="swash">{g.accent}</span>
+          </>
+        }
+        subtitle={
+          <>
+            {dateLine}.
+            <br />
+            {loading ? "Pulling your week together…" : summaryLine(todaySchedule.length, soon.length, reminderDays)}
+          </>
+        }
+        actions={
+          <a href="/api/export/all" download>
+            <Button variant="primary">Download study pack</Button>
+          </a>
+        }
       />
 
       {loading && <Loading label="Loading your dashboard…" />}
@@ -59,108 +97,82 @@ export function Dashboard() {
       {/* First-run guidance when nothing's synced yet */}
       {!loading && courses.length === 0 && <GettingStarted />}
 
-      {/* Today's timetable */}
-      <Card className="mb-6 p-5">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-900">📆 Today's schedule</h2>
-          <Link to="/calendar" className="text-xs text-indigo-600 hover:underline">Full calendar →</Link>
-        </div>
-        {todaySchedule.length === 0 ? (
-          <p className="text-sm text-slate-400">
-            No classes scheduled today. Add your timetable in Settings to see it here.
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {todaySchedule.map((e) => (
-              <div key={e.id} className="flex items-center gap-4 rounded-xl bg-slate-50 px-4 py-2.5">
-                <div className="w-24 shrink-0 text-sm font-medium tabular-nums text-slate-900">
-                  {new Date(e.start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                  {e.end_at && (
-                    <span className="text-slate-400">
-                      {" – "}
-                      {new Date(e.end_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                    </span>
-                  )}
-                </div>
-                <span className="h-8 w-1 rounded-full" style={{ background: courseColor(e.course_id) }} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-slate-900">{e.title}</div>
-                  <div className="text-xs text-slate-500">
-                    {courseCode(e.course_id)}
-                    {e.location ? ` · ${e.location}` : ""}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
-
-      {/* Quick actions */}
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card hover className="p-5">
-          <div className="mb-1 text-sm font-semibold text-slate-900">📦 Study pack</div>
-          <p className="mb-4 text-xs leading-relaxed text-slate-500">
-            All courses + a CLAUDE.md tutor guide, zipped for any LLM.
-          </p>
-          <a href="/api/export/all" download>
-            <Button variant="primary" className="w-full">Download study pack</Button>
-          </a>
-        </Card>
-        <Card className="p-5">
-          <div className="mb-1 text-sm font-semibold text-slate-900">🔔 Remind me</div>
-          <p className="mb-4 text-xs text-slate-500">Flag deadlines this far ahead.</p>
-          <div className="flex gap-1.5">
-            {[1, 3, 7, 14].map((d) => (
-              <button
-                key={d}
-                onClick={async () => { setReminderDays(d); await api.setReminderDays(d); }}
-                className={`flex-1 rounded-lg py-1.5 text-xs font-medium transition ${
-                  reminderDays === d ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                {d}d
-              </button>
-            ))}
-          </div>
-        </Card>
-        <Card className="p-5">
-          <div className="mb-1 text-sm font-semibold text-slate-900">📆 Google Calendar</div>
-          {gcal.connected ? (
-            <><p className="mb-4 text-xs text-emerald-600">Connected — syncing.</p><Badge tone="green">Syncing</Badge></>
+      {/* Today's timetable — framed as its own little surface */}
+      <Reveal className="mb-8">
+        <PanelFrame
+          label="today · timetable"
+          action={
+            <Link to="/calendar" className="text-xs font-medium text-accent-deep hover:underline">
+              Full calendar →
+            </Link>
+          }
+        >
+          {todaySchedule.length === 0 ? (
+            <p className="px-5 py-8 text-center text-sm text-ink-muted">
+              No classes scheduled today.
+            </p>
           ) : (
-            <><p className="mb-4 text-xs text-slate-500">Push deadlines to your calendar.</p><Link to="/settings"><Button className="w-full">Set up</Button></Link></>
+            <div className="divide-y divide-hair">
+              {todaySchedule.map((e) => {
+                const isNext = nextClass?.id === e.id;
+                return (
+                  <div
+                    key={e.id}
+                    className={`flex items-center gap-4 px-5 py-3.5 ${isNext ? "bg-accent-tint/50" : ""}`}
+                  >
+                    <div className="w-24 shrink-0 text-sm font-medium tabular-nums text-ink">
+                      {new Date(e.start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                      {e.end_at && (
+                        <span className="text-ink-muted">
+                          {" – "}
+                          {new Date(e.end_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      )}
+                    </div>
+                    <span className="h-8 w-1 rounded-pill" style={{ background: courseColor(e.course_id) }} />
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium text-ink">{e.title}</div>
+                      <div className="mt-0.5 text-xs text-ink-muted">
+                        {courseCode(e.course_id)}
+                        {e.location ? ` · ${e.location}` : ""}
+                      </div>
+                    </div>
+                    {isNext && <Badge tone="accent">next up</Badge>}
+                  </div>
+                );
+              })}
+            </div>
           )}
-        </Card>
+        </PanelFrame>
+      </Reveal>
+
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
+          Next deadlines
+        </h2>
+        {hiddenCount > 0 && (
+          <Link to="/calendar" className="text-xs font-medium text-accent-deep hover:underline">
+            {hiddenCount} more in calendar →
+          </Link>
+        )}
       </div>
-
-      {soon.length > 0 && (
-        <Card className="mb-6 border-amber-200 bg-amber-50 p-4">
-          <span className="text-sm font-medium text-amber-800">
-            ⚠️ {soon.length} due within {reminderDays} day{reminderDays > 1 ? "s" : ""}
-          </span>
-        </Card>
-      )}
-
-      <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">Upcoming deadlines</h2>
-      {deadlines.length === 0 ? (
-        <EmptyState icon="✅">Nothing upcoming. Hit Sync Moodle to refresh.</EmptyState>
+      {shownDeadlines.length === 0 ? (
+        <EmptyState icon="✅">Nothing due in the next 60 days.</EmptyState>
       ) : (
         <div className="space-y-2">
-          {deadlines.map((e) => {
+          {shownDeadlines.map((e) => {
             const meta = dueMeta(e.start_at);
-            const isOpen = e.kind === "open";
             return (
               <Card key={e.id} hover className="flex items-center gap-4 p-4">
-                <span className="h-9 w-1.5 rounded-full" style={{ background: courseColor(e.course_id) }} />
+                <span className="h-9 w-1.5 shrink-0 rounded-pill" style={{ background: courseColor(e.course_id) }} />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-slate-900">{e.title}</div>
-                  <div className="text-xs text-slate-400">{courseCode(e.course_id)}{isOpen && " · opens"}</div>
+                  <div className="truncate text-sm font-medium text-ink">{e.title}</div>
+                  <div className="mt-0.5 text-xs text-ink-muted">
+                    {courseCode(e.course_id)} ·{" "}
+                    {new Date(e.start_at).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
+                  </div>
                 </div>
-                <div className="text-right text-xs text-slate-400">
-                  {new Date(e.start_at).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
-                </div>
-                {isOpen ? <Badge tone="indigo">opens</Badge> : <Badge tone={meta.tone}>{meta.label}</Badge>}
+                <Badge tone={meta.tone}>{meta.label}</Badge>
               </Card>
             );
           })}
@@ -171,38 +183,35 @@ export function Dashboard() {
   );
 }
 
-function greeting(): string {
+function greeting(): { lead: string; accent: string } {
   const h = new Date().getHours();
-  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+  const accent = h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
+  return { lead: "Good", accent };
 }
 
+/** Calm one-liner: what's actually on today, in plain terms. */
+function summaryLine(classes: number, dueSoon: number, days: number): string {
+  const a =
+    classes === 0 ? "No classes today" : `${classes} class${classes > 1 ? "es" : ""} today`;
+  const b =
+    dueSoon === 0
+      ? "nothing due just yet"
+      : `${dueSoon} thing${dueSoon > 1 ? "s" : ""} due inside ${days} day${days > 1 ? "s" : ""}`;
+  return `${a}, ${b}.`;
+}
+
+/** Shown while there's nothing to show — points at the guided setup. */
 function GettingStarted() {
-  const steps = [
-    { t: "Add your keys", d: "Put MOODLE_URL, MOODLE_TOKEN and OPENAI_API_KEY in your .env file, then restart.", tag: ".env" },
-    { t: "Sync Moodle", d: "Hit “Sync Moodle” (bottom-left) to pull your courses, assignments and deadlines.", tag: "sidebar" },
-    { t: "Connect Echo360", d: "Settings → Echo360 → Connect to auto-transcribe your lecture recordings.", tag: "Settings" },
-    { t: "Add your timetable", d: "Settings → Class timetable → paste your iCal link (or drop the .ics in the project folder).", tag: "Settings" },
-  ];
   return (
-    <Card className="mb-6 border-indigo-100 bg-indigo-50/50 p-6">
-      <h2 className="mb-1 text-base font-semibold text-slate-900">👋 Welcome — let's get you set up</h2>
-      <p className="mb-4 text-sm text-slate-600">A few one-time steps and your dashboard fills itself in.</p>
-      <ol className="space-y-3">
-        {steps.map((s, i) => (
-          <li key={i} className="flex gap-3">
-            <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-semibold text-white">{i + 1}</span>
-            <div>
-              <div className="text-sm font-medium text-slate-900">
-                {s.t} <span className="ml-1 rounded bg-white px-1.5 py-0.5 text-[11px] font-normal text-slate-500 ring-1 ring-slate-200">{s.tag}</span>
-              </div>
-              <div className="text-sm text-slate-600">{s.d}</div>
-            </div>
-          </li>
-        ))}
-      </ol>
-      <div className="mt-4">
-        <Link to="/settings"><Button variant="primary">Open Settings</Button></Link>
-      </div>
+    <Card className="mb-8 bg-accent-tint/40 p-6">
+      <h2 className="mb-1 font-display text-xl font-bold tracking-tight text-ink">
+        Nothing here yet
+      </h2>
+      <p className="mb-5 max-w-xl text-sm text-ink-muted">
+        Connect your Moodle and this fills itself in — courses, deadlines, lecture transcripts. It
+        takes about two minutes and it's mostly copy-and-paste.
+      </p>
+      <Link to="/setup"><Button variant="primary">Start setup</Button></Link>
     </Card>
   );
 }

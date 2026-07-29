@@ -10,6 +10,7 @@ import { Lectures } from "./pages/Lectures.js";
 import { Notes } from "./pages/Notes.js";
 import { Assistant } from "./pages/Assistant.js";
 import { Settings } from "./pages/Settings.js";
+import { Setup } from "./pages/Setup.js";
 
 const router = createBrowserRouter([
   {
@@ -23,6 +24,7 @@ const router = createBrowserRouter([
       { path: "notes", element: <Notes /> },
       { path: "assistant", element: <Assistant /> },
       { path: "settings", element: <Settings /> },
+      { path: "setup", element: <Setup /> },
     ],
   },
 ]);

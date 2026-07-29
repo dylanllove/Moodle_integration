@@ -1,19 +1,35 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type CalEvent, type Course } from "../api.js";
 import { courseColor } from "../colors.js";
-import { Card, PageHeader, Button, Badge, EmptyState, Loading, dueMeta } from "../ui.js";
+import {
+  Card,
+  PageHeader,
+  Badge,
+  Tabs,
+  IconButton,
+  SectionTitle,
+  EmptyState,
+  Loading,
+  dueMeta,
+} from "../ui.js";
 
 type View = "month" | "agenda";
 
-// Event-type styling so what matters (deadlines, exams) pops at a glance.
-const TYPE: Record<string, { label: string; color: string; tone: "red" | "amber" | "green" | "indigo" | "neutral" }> = {
-  deadline: { label: "Deadline", color: "#e11d48", tone: "red" },
-  exam: { label: "Exam", color: "#7c3aed", tone: "indigo" },
-  open: { label: "Opens", color: "#64748b", tone: "neutral" },
-  class: { label: "Class", color: "#2563eb", tone: "indigo" },
-  other: { label: "Event", color: "#64748b", tone: "neutral" },
+// Event-type styling. Muted on purpose — these sit beside the apricot accent
+// all day, and each hue is kept clear of the terracotta used for accent text.
+const TYPE: Record<string, { label: string; color: string; tone: "red" | "amber" | "green" | "accent" | "neutral" }> = {
+  deadline: { label: "Deadline", color: "#c0392b", tone: "red" },
+  exam: { label: "Exam", color: "#6b4a7a", tone: "accent" },
+  open: { label: "Opens", color: "#8a8a80", tone: "neutral" },
+  class: { label: "Class", color: "#4a7c6f", tone: "neutral" },
+  other: { label: "Event", color: "#8a8a80", tone: "neutral" },
 };
 const typeOf = (k: string) => TYPE[k] ?? TYPE.other;
+
+const VIEWS = [
+  { key: "month" as const, label: "Month" },
+  { key: "agenda" as const, label: "Agenda" },
+];
 
 export function Calendar() {
   const [events, setEvents] = useState<CalEvent[]>([]);
@@ -52,51 +68,34 @@ export function Calendar() {
       <PageHeader
         title="Calendar"
         subtitle="Deadlines, opening dates, classes & exams"
-        actions={
-          <div className="flex rounded-xl border border-slate-300 bg-white p-0.5">
-            {(["month", "agenda"] as View[]).map((v) => (
-              <button
-                key={v}
-                onClick={() => setView(v)}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium capitalize transition ${
-                  view === v ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-100"
-                }`}
-              >
-                {v}
-              </button>
-            ))}
-          </div>
-        }
+        actions={<Tabs tabs={VIEWS} value={view} onChange={setView} />}
       />
 
-      {/* Course filters + type legend */}
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-1.5">
+      {/* Course filters. No colour legend — every event is labelled where it
+          matters (day panel, agenda), so a legend is decoration. */}
+      {courses.length > 1 && (
+        <div className="mb-5 flex flex-wrap gap-1.5">
           {courses.map((c) => {
             const off = hidden.has(c.id);
             return (
               <button
                 key={c.id}
                 onClick={() => toggleCourse(c.id)}
-                className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition ${
-                  off ? "border-slate-200 bg-white text-slate-400" : "border-slate-300 bg-white text-slate-700"
+                aria-pressed={!off}
+                className={`inline-flex items-center gap-1.5 rounded-pill px-3 py-1 text-xs font-medium transition duration-200 ${
+                  off ? "bg-chip/60 text-ink-muted/70 hover:bg-chip" : "bg-accent-tint text-accent-deep"
                 }`}
               >
-                <span className="h-2 w-2 rounded-full" style={{ background: off ? "#cbd5e1" : courseColor(c.id) }} />
+                <span
+                  className="h-1.5 w-1.5 rounded-pill transition duration-200"
+                  style={{ background: off ? "#c4c4bb" : courseColor(c.id) }}
+                />
                 {c.code}
               </button>
             );
           })}
         </div>
-        <div className="flex flex-wrap gap-3 text-xs text-slate-500">
-          {["deadline", "exam", "class", "open"].map((k) => (
-            <span key={k} className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: typeOf(k).color }} />
-              {typeOf(k).label}
-            </span>
-          ))}
-        </div>
-      </div>
+      )}
 
       {loading ? (
         <Loading />
@@ -110,11 +109,6 @@ export function Calendar() {
       ) : (
         <Agenda events={shown} courseCode={courseCode} />
       )}
-
-      <p className="mt-6 text-xs text-slate-400">
-        Apple Calendar can subscribe to{" "}
-        <code className="rounded bg-slate-100 px-1.5 py-0.5">{location.origin}/api/calendar.ics</code>
-      </p>
     </div>
   );
 }
@@ -135,25 +129,49 @@ function MonthGrid({
   const cells = useMemo(() => monthCells(cursor), [cursor]);
   const byDay = useMemo(() => {
     const m = new Map<string, CalEvent[]>();
-    for (const e of events) (m.get(dayKey(new Date(e.start_at))) ?? m.set(dayKey(new Date(e.start_at)), []).get(dayKey(new Date(e.start_at)))!).push(e);
+    for (const e of events) {
+      const k = dayKey(new Date(e.start_at));
+      const list = m.get(k) ?? [];
+      list.push(e);
+      m.set(k, list);
+    }
     return m;
   }, [events]);
   const today = dayKey(new Date());
 
   return (
     <Card className="overflow-hidden p-0">
-      <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-3">
-        <Button size="sm" variant="ghost" onClick={() => setCursor(addMonths(cursor, -1))}>←</Button>
-        <div className="w-40 text-center text-sm font-semibold text-slate-900">
+      <div className="flex items-center gap-1 border-b border-hair px-4 py-3">
+        <IconButton label="Previous month" onClick={() => setCursor(addMonths(cursor, -1))}>
+          <Chevron dir="left" />
+        </IconButton>
+        <div className="w-44 text-center font-display text-[15px] font-bold tracking-tight text-ink">
           {cursor.toLocaleString([], { month: "long", year: "numeric" })}
         </div>
-        <Button size="sm" variant="ghost" onClick={() => setCursor(addMonths(cursor, 1))}>→</Button>
-        <button className="ml-1 text-xs text-slate-400 hover:text-slate-600" onClick={() => setCursor(startOfMonth(new Date()))}>Today</button>
+        <IconButton label="Next month" onClick={() => setCursor(addMonths(cursor, 1))}>
+          <Chevron dir="right" />
+        </IconButton>
+        <button
+          className="ml-2 rounded-pill px-2.5 py-1 text-xs font-medium text-ink-muted transition duration-200 hover:bg-chip hover:text-ink"
+          onClick={() => setCursor(startOfMonth(new Date()))}
+        >
+          Today
+        </button>
       </div>
-      <div className="grid grid-cols-7 bg-slate-100" style={{ gap: 1 }}>
+
+      <div className="grid grid-cols-7 border-b border-hair">
         {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-          <div key={d} className="bg-white py-2 text-center text-xs font-semibold text-slate-400">{d}</div>
+          <div
+            key={d}
+            className="py-2.5 text-center text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-muted"
+          >
+            {d}
+          </div>
         ))}
+      </div>
+
+      {/* Hairline borders on the cells themselves — no gap-trick background. */}
+      <div className="grid grid-cols-7">
         {cells.map((d) => {
           const key = dayKey(d);
           const inMonth = d.getMonth() === cursor.getMonth();
@@ -164,18 +182,38 @@ function MonthGrid({
             <button
               key={d.toISOString()}
               onClick={() => onSelect(key)}
-              className={`min-h-[96px] cursor-pointer bg-white p-1.5 text-left transition hover:bg-slate-50 ${inMonth ? "" : "bg-slate-50/60"} ${isSel ? "ring-2 ring-inset ring-indigo-400" : ""}`}
+              className={`min-h-[98px] border-b border-r border-hair p-1.5 text-left align-top transition duration-200 ${
+                isSel ? "bg-accent-tint/60" : inMonth ? "hover:bg-chip/50" : "bg-chip/25"
+              }`}
             >
-              <div className={`mb-1 flex h-6 w-6 items-center justify-center rounded-full text-xs ${isToday ? "bg-indigo-600 font-semibold text-white" : inMonth ? "text-slate-500" : "text-slate-300"}`}>
+              <div
+                className={`mb-1 flex h-6 w-6 items-center justify-center rounded-pill text-xs tabular-nums transition duration-200 ${
+                  isToday
+                    ? "bg-pill font-semibold text-white"
+                    : inMonth
+                      ? "text-ink-muted"
+                      : "text-ink-muted/40"
+                }`}
+              >
                 {d.getDate()}
               </div>
-              <div className="space-y-1">
-                {items.slice(0, 3).map((e) => (
-                  <div key={e.id} title={e.title} className="flex items-center gap-1 truncate rounded px-1 py-0.5 text-[11px]" style={{ background: typeOf(e.kind).color + "1a", color: typeOf(e.kind).color }}>
-                    <span className="truncate">{e.title.replace(/^(Due|Opens): /, "")}</span>
-                  </div>
-                ))}
-                {items.length > 3 && <div className="pl-1 text-[11px] text-slate-400">+{items.length - 3} more</div>}
+              <div className="space-y-0.5">
+                {items.slice(0, 3).map((e) => {
+                  const t = typeOf(e.kind);
+                  return (
+                    <div
+                      key={e.id}
+                      title={e.title}
+                      className="flex items-center gap-1.5 truncate rounded-[5px] px-1.5 py-0.5 text-[11px] leading-tight"
+                      style={{ background: t.color + "14", color: t.color }}
+                    >
+                      <span className="truncate">{e.title.replace(/^(Due|Opens): /, "")}</span>
+                    </div>
+                  );
+                })}
+                {items.length > 3 && (
+                  <div className="pl-1.5 text-[11px] text-ink-muted">+{items.length - 3} more</div>
+                )}
               </div>
             </button>
           );
@@ -201,27 +239,35 @@ function DayPanel({
   const label = new Date(y!, m!, d!).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
 
   return (
-    <Card className="p-5">
-      <div className="mb-3 text-sm font-semibold text-slate-900">{label}</div>
+    <Card className="h-fit p-5">
+      <SectionTitle className="mb-4">{label}</SectionTitle>
       {items.length === 0 ? (
-        <p className="text-sm text-slate-400">Nothing scheduled.</p>
+        <p className="text-sm text-ink-muted">Nothing scheduled.</p>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {items.map((e) => {
             const t = typeOf(e.kind);
             return (
               <div key={e.id} className="flex gap-3">
-                <span className="mt-1 h-full w-1 shrink-0 rounded-full" style={{ background: t.color }} />
+                <span
+                  className="mt-0.5 w-1 shrink-0 rounded-pill"
+                  style={{ background: t.color }}
+                />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-medium text-slate-900">{e.title.replace(/^(Due|Opens): /, "")}</div>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <Badge tone={t.tone}>{t.label}</Badge>
-                    <span>{courseCode(e.course_id)}</span>
-                    <span>·</span>
-                    <span>{new Date(e.start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  <div className="text-sm font-medium leading-snug text-ink">
+                    {e.title.replace(/^(Due|Opens): /, "")}
+                  </div>
+                  <div className="mt-1 text-xs text-ink-muted">
+                    {t.label} · {courseCode(e.course_id)} ·{" "}
+                    {new Date(e.start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </div>
                   {e.url && (
-                    <a href={e.url} target="_blank" rel="noreferrer" className="mt-1 inline-block text-xs text-indigo-600 hover:underline">
+                    <a
+                      href={e.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-2 inline-block text-xs font-medium text-accent-deep transition duration-200 hover:underline"
+                    >
                       Open in Moodle ↗
                     </a>
                   )}
@@ -245,26 +291,29 @@ function Agenda({ events, courseCode }: { events: CalEvent[]; courseCode: (id: s
     (groups[day] ??= []).push(e);
   }
   return (
-    <div className="space-y-6">
+    <div className="space-y-7">
       {Object.entries(groups).map(([day, items]) => (
         <div key={day}>
-          <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">{day}</div>
+          <div className="mb-2.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
+            {day}
+          </div>
           <div className="space-y-2">
             {items.map((e) => {
               const t = typeOf(e.kind);
               const meta = dueMeta(e.start_at);
               return (
-                <Card key={e.id} className="flex items-center gap-3 p-3.5">
-                  <span className="h-8 w-1 rounded-full" style={{ background: t.color }} />
+                <Card key={e.id} hover className="flex items-center gap-3.5 p-4">
+                  <span className="h-8 w-1 shrink-0 rounded-pill" style={{ background: t.color }} />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium text-slate-800">{e.title.replace(/^(Due|Opens): /, "")}</div>
-                    <div className="flex items-center gap-2 text-xs text-slate-400">
-                      <Badge tone={t.tone}>{t.label}</Badge>
-                      {courseCode(e.course_id)}
+                    <div className="truncate text-sm font-medium text-ink">
+                      {e.title.replace(/^(Due|Opens): /, "")}
+                    </div>
+                    <div className="mt-0.5 text-xs text-ink-muted">
+                      {t.label} · {courseCode(e.course_id)}
                     </div>
                   </div>
                   {e.kind === "deadline" && <Badge tone={meta.tone}>{meta.label}</Badge>}
-                  <span className="text-xs text-slate-400">
+                  <span className="shrink-0 text-xs tabular-nums text-ink-muted">
                     {new Date(e.start_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </span>
                 </Card>
@@ -274,6 +323,23 @@ function Agenda({ events, courseCode }: { events: CalEvent[]; courseCode: (id: s
         </div>
       ))}
     </div>
+  );
+}
+
+function Chevron({ dir }: { dir: "left" | "right" }) {
+  return (
+    <svg
+      className="h-4 w-4"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={dir === "left" ? "m15 18-6-6 6-6" : "m9 6 6 6-6 6"} />
+    </svg>
   );
 }
 

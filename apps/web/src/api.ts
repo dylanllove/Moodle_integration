@@ -90,8 +90,43 @@ export interface Transcript {
   error: string | null;
 }
 
+export interface SetupStatus {
+  openai: boolean;
+  moodle: { connected: boolean; url: string; site?: string; user?: string; error?: string };
+  timetable: { url: string; classes: number };
+  echo360: boolean;
+  deps: { node: string; ffmpeg: boolean };
+}
+
+interface MoodleOk {
+  ok: boolean;
+  site: string;
+  user: string;
+  url: string;
+}
+
 export const api = {
   health: () => req<{ ok: boolean }>("/health"),
+
+  // First-run setup
+  setupStatus: () => req<SetupStatus>("/setup/status"),
+  setupMoodleLogin: (url: string, username: string, password: string) =>
+    req<MoodleOk>("/setup/moodle/login", {
+      method: "POST",
+      body: JSON.stringify({ url, username, password }),
+    }),
+  setupMoodleToken: (url: string, token: string) =>
+    req<MoodleOk>("/setup/moodle/token", {
+      method: "POST",
+      body: JSON.stringify({ url, token }),
+    }),
+  setupOpenai: (key: string) =>
+    req<{ ok: boolean }>("/setup/openai", { method: "POST", body: JSON.stringify({ key }) }),
+  setupTimetable: (url: string) =>
+    req<{ ok: boolean; classes: number }>("/setup/timetable", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    }),
   lecture: (id: string) =>
     req<{ lecture: Lecture; transcript: Transcript | null }>(`/lectures/${id}`),
   transcribe: (id: string) =>

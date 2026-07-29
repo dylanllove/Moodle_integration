@@ -12,6 +12,7 @@ import multipart from "@fastify/multipart";
 import { getDb } from "@uni/db";
 import { registerCoreRoutes } from "./routes/core.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
+import { registerSetupRoutes } from "./routes/setup.js";
 import { registerLmsRoutes } from "./routes/lms.js";
 import { registerCalendarRoutes } from "./routes/calendar.js";
 import { registerTranscribeRoutes } from "./routes/transcribe.js";
@@ -46,6 +47,7 @@ getDb();
 app.get("/api/health", async () => ({ ok: true, ts: new Date().toISOString() }));
 
 await registerSettingsRoutes(app);
+await registerSetupRoutes(app);
 await registerCoreRoutes(app);
 await registerLmsRoutes(app);
 await registerCalendarRoutes(app);

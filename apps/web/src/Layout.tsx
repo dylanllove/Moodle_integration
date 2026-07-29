@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { api } from "./api.js";
 import { ChatWidget } from "./ChatWidget.js";
@@ -26,9 +26,34 @@ export function Layout() {
   const [syncing, setSyncing] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [lastSynced, setLastSynced] = useState<string | null>(null);
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
 
   useEffect(() => {
     api.settings().then((s) => setLastSynced(s.last_synced ?? null)).catch(() => {});
+  }, []);
+
+  // First run on a fresh clone: nothing is configured, so send them to setup
+  // rather than an empty dashboard. Only redirects once, and never away from a
+  // page they navigated to themselves.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .setupStatus()
+      .then((s) => {
+        if (cancelled) return;
+        const unconfigured = !s.moodle.connected || !s.openai;
+        setNeedsSetup(unconfigured);
+        if (unconfigured && !s.moodle.url && !s.openai && pathname === "/") navigate("/setup");
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally mount-only: a redirect that re-fires on every navigation
+    // would trap you on /setup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function sync() {
@@ -46,30 +71,34 @@ export function Layout() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900">
+    <div className="min-h-screen text-ink">
       <div className="flex">
-        <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-slate-200 bg-white px-4 py-5">
-          <div className="mb-8 flex items-center gap-2.5 px-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-lg font-bold text-white">
+        <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-hair bg-surface px-4 py-6">
+          {/* Wordmark — the only place the deep terracotta fills a shape. */}
+          <div className="mb-9 flex items-center gap-2.5 px-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-[10px] bg-accent-deep font-display text-lg font-black text-white">
               U
             </div>
             <div className="leading-tight">
-              <div className="text-sm font-semibold text-slate-900">Uni Study</div>
-              <div className="text-xs text-slate-400">study manager</div>
+              <div className="font-display text-[15px] font-bold tracking-tight text-ink">
+                Uni Study
+              </div>
+              <div className="text-xs text-ink-muted">quietly under control</div>
             </div>
           </div>
 
           <nav className="flex flex-col gap-0.5">
-            {nav.map((n) => (
+            {/* Only present until the essentials are connected. */}
+            {(needsSetup ? [{ to: "/setup", label: "Finish setup", icon: SparkIcon, end: true }, ...nav] : nav).map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}
                 end={n.end}
                 className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition ${
+                  `flex items-center gap-3 rounded-pill px-3 py-2 text-sm transition duration-200 ${
                     isActive
-                      ? "bg-indigo-50 text-indigo-700"
-                      : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                      ? "bg-accent-tint font-semibold text-accent-deep"
+                      : "font-medium text-ink-muted hover:bg-chip hover:text-ink"
                   }`
                 }
               >
@@ -83,11 +112,11 @@ export function Layout() {
             ))}
           </nav>
 
-          <div className="mt-auto border-t border-slate-100 pt-4">
+          <div className="mt-auto border-t border-hair pt-5">
             <button
               onClick={sync}
               disabled={syncing}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-3 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-2 rounded-pill bg-accent px-3 py-2.5 text-sm font-medium text-ink transition duration-200 hover:brightness-[0.94] disabled:opacity-50"
             >
               <svg
                 className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`}
@@ -100,14 +129,14 @@ export function Layout() {
               </svg>
               {syncing ? "Syncing…" : "Sync Moodle"}
             </button>
-            <p className="mt-2 text-center text-xs text-slate-400">
+            <p className="mt-2.5 text-center text-[13px] text-ink-muted">
               {status ?? (relTime(lastSynced) ? `Synced ${relTime(lastSynced)}` : "Not synced yet")}
             </p>
           </div>
         </aside>
 
         <main className="min-h-screen flex-1">
-          <div className="mx-auto max-w-6xl px-10 py-10">
+          <div className="mx-auto max-w-[1200px] px-10 py-14">
             <Outlet />
           </div>
         </main>
@@ -119,12 +148,13 @@ export function Layout() {
 
 // --- minimal stroke icons ---
 type IconProps = { active?: boolean };
-const cls = (active?: boolean) => `h-[18px] w-[18px] ${active ? "text-indigo-600" : "text-slate-400"}`;
+const cls = (active?: boolean) => `h-[18px] w-[18px] ${active ? "text-accent-deep" : "text-ink-muted"}`;
 const S = (p: { children: ReactNode; active?: boolean }) => (
   <svg className={cls(p.active)} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
     {p.children}
   </svg>
 );
+function SparkIcon({ active }: IconProps) { return <S active={active}><path d="M12 3v4M12 17v4M3 12h4M17 12h4" /><circle cx="12" cy="12" r="3.2" /></S>; }
 function HomeIcon({ active }: IconProps) { return <S active={active}><path d="M3 10.5 12 3l9 7.5" /><path d="M5 9.5V21h14V9.5" /></S>; }
 function CalendarIcon({ active }: IconProps) { return <S active={active}><rect x="3" y="4.5" width="18" height="16" rx="2" /><path d="M3 9h18M8 3v4M16 3v4" /></S>; }
 function BookIcon({ active }: IconProps) { return <S active={active}><path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 1-2-2z" /><path d="M8 3v18" /></S>; }

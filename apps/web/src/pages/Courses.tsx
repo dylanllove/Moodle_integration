@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type Course } from "../api.js";
-import { Card, PageHeader, Button, Badge, EmptyState, Loading } from "../ui.js";
+import { Card, PageHeader, Button, Badge, Chip, Notice, EmptyState, Loading } from "../ui.js";
 import { courseColor } from "../colors.js";
 
 export function Courses() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [showAll, setShowAll] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const nav = useNavigate();
 
@@ -26,11 +27,12 @@ export function Courses() {
 
   async function makeCheatSheet(c: Course) {
     setBusy(c.id);
+    setErr(null);
     try {
       await api.cheatsheet(c.id);
       nav("/notes");
     } catch (e) {
-      alert(`Cheat sheet failed: ${e}`);
+      setErr(`Couldn't build a cheat sheet for ${c.code} — ${e}`);
     } finally {
       setBusy(null);
     }
@@ -51,6 +53,8 @@ export function Courses() {
         }
       />
 
+      {err && <Notice tone="error" className="mb-5">{err}</Notice>}
+
       {loading ? (
         <Loading />
       ) : courses.length === 0 ? (
@@ -59,20 +63,26 @@ export function Courses() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {courses.map((c) => (
             <Card key={c.id} hover className="p-5">
-              <div className="flex items-start gap-3">
-                <span className="mt-1 h-10 w-1.5 shrink-0 rounded-full" style={{ background: courseColor(c.id) }} />
+              <div className="flex items-start gap-3.5">
+                <span
+                  className="mt-1 h-10 w-1.5 shrink-0 rounded-pill"
+                  style={{ background: courseColor(c.id) }}
+                />
                 <div className="min-w-0 flex-1">
-                  <div className="mb-0.5 flex items-center gap-2">
-                    <span className="text-xs font-medium text-slate-400">{c.code}</span>
+                  <div className="mb-1.5 flex items-center gap-2">
+                    <Chip>{c.code}</Chip>
                     {c.active ? <Badge tone="green">active</Badge> : <Badge>inactive</Badge>}
                   </div>
-                  <div className="truncate text-[15px] font-semibold text-slate-900" title={c.name}>
+                  <div
+                    className="truncate font-display text-[17px] font-bold leading-snug tracking-tight text-ink"
+                    title={c.name}
+                  >
                     {c.name}
                   </div>
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
                     <Button size="sm" variant="primary" disabled={busy === c.id} onClick={() => makeCheatSheet(c)}>
-                      {busy === c.id ? "Generating…" : "✨ Cheat sheet"}
+                      {busy === c.id ? "Generating…" : "Cheat sheet"}
                     </Button>
                     <a href={`/api/export/course/${encodeURIComponent(c.id)}`} download>
                       <Button size="sm">Download pack</Button>
@@ -83,7 +93,12 @@ export function Courses() {
                       </Button>
                     )}
                     {c.url && (
-                      <a href={c.url} target="_blank" rel="noreferrer" className="text-xs text-slate-400 hover:text-slate-600">
+                      <a
+                        href={c.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-xs font-medium text-ink-muted transition duration-200 hover:text-accent-deep"
+                      >
                         Moodle ↗
                       </a>
                     )}

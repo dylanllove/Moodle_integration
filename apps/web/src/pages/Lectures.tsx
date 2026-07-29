@@ -1,6 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type Lecture, type Transcript, type TranscriptSegment, type Course } from "../api.js";
-import { Card, PageHeader, Button, Badge, EmptyState, Loading, Spinner } from "../ui.js";
+import {
+  Card,
+  PageHeader,
+  Button,
+  Badge,
+  Chip,
+  Tabs,
+  Select,
+  Notice,
+  EmptyState,
+  Loading,
+  Spinner,
+} from "../ui.js";
 import { Markdown } from "../Markdown.js";
 import { courseColor } from "../colors.js";
 
@@ -40,13 +52,13 @@ export function Lectures() {
   return (
     <div>
       <PageHeader
-        title="Lectures & Transcripts"
+        title="Lectures & transcripts"
         subtitle={total ? `${done} of ${total} transcribed across ${groups.length} course${groups.length > 1 ? "s" : ""}` : "Your current courses' lectures"}
         actions={<UploadButton courses={courses} onDone={load} />}
       />
       {loading && <Loading label="Loading lectures…" />}
       <div className={`grid grid-cols-1 gap-6 lg:grid-cols-[22rem_1fr] ${loading ? "hidden" : ""}`}>
-        <div className="space-y-5">
+        <div className="space-y-6">
           {groups.length === 0 ? (
             <EmptyState icon="🎧">No lectures yet — connect Echo360 or upload a recording.</EmptyState>
           ) : (
@@ -56,23 +68,38 @@ export function Lectures() {
               return (
                 <div key={gid}>
                   <div className="mb-2 flex items-center gap-2 px-1">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: courseColor(g.course?.id ?? null) }} />
-                    <span className="text-sm font-semibold text-slate-900">{g.course?.code ?? "Other"}</span>
-                    <span className="text-xs text-slate-400">{gdone}/{g.items.length} transcribed</span>
+                    <span
+                      className="h-2 w-2 rounded-pill"
+                      style={{ background: courseColor(g.course?.id ?? null) }}
+                    />
+                    <span className="font-display text-[13px] font-bold tracking-tight text-ink">
+                      {g.course?.code ?? "Other"}
+                    </span>
+                    <span className="text-xs text-ink-muted">{gdone}/{g.items.length} transcribed</span>
                   </div>
-                  <div className="space-y-1.5">
-                    {g.items.map((l) => (
-                      <button
-                        key={l.id}
-                        onClick={() => setSelected(l.id)}
-                        className={`flex w-full items-center gap-2 rounded-xl border px-3.5 py-2.5 text-left transition ${
-                          selected === l.id ? "border-indigo-200 bg-indigo-50" : "border-slate-200 bg-white hover:border-slate-300"
-                        }`}
-                      >
-                        <span className="min-w-0 flex-1 truncate text-sm text-slate-800">{l.title}</span>
-                        <StatusDot l={l} />
-                      </button>
-                    ))}
+                  <div className="space-y-0.5">
+                    {g.items.map((l) => {
+                      const active = selected === l.id;
+                      return (
+                        <button
+                          key={l.id}
+                          onClick={() => setSelected(l.id)}
+                          aria-current={active}
+                          className={`flex w-full items-center gap-2 rounded-field px-3.5 py-2.5 text-left transition duration-200 ${
+                            active ? "bg-accent-tint" : "hover:bg-chip"
+                          }`}
+                        >
+                          <span
+                            className={`min-w-0 flex-1 truncate text-sm ${
+                              active ? "font-semibold text-accent-deep" : "text-ink"
+                            }`}
+                          >
+                            {l.title}
+                          </span>
+                          <StatusDot l={l} />
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -87,20 +114,29 @@ export function Lectures() {
   );
 }
 
+/**
+ * Only the exceptions get a badge. Most lectures are transcribed, so badging
+ * that case makes the common state as loud as the ones needing attention —
+ * the group header already carries the "8/10 transcribed" count.
+ */
 function StatusDot({ l }: { l: Lecture }) {
-  if (l.has_text) return <Badge tone="green">transcript</Badge>;
+  if (l.has_text) return null;
   if (l.transcript_status === "no_recording") return <Badge tone="amber">no rec</Badge>;
-  if (["pending", "downloading", "transcribing"].includes(l.transcript_status ?? "")) return <Badge tone="indigo">…</Badge>;
-  return <span className="text-xs text-slate-300">—</span>;
+  if (["pending", "downloading", "transcribing"].includes(l.transcript_status ?? "")) {
+    return <Badge tone="neutral">working…</Badge>;
+  }
+  return <span className="text-xs text-ink-muted/50">—</span>;
 }
 
 function UploadButton({ courses, onDone }: { courses: Course[]; onDone: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [course, setCourse] = useState("");
+  const [err, setErr] = useState<string | null>(null);
 
   async function upload(file: File) {
     setBusy(true);
+    setErr(null);
     try {
       const fd = new FormData();
       fd.append("course_id", course || courses[0]?.id || "");
@@ -110,24 +146,42 @@ function UploadButton({ courses, onDone }: { courses: Course[]; onDone: () => vo
       if (!res.ok) throw new Error((await res.json()).error);
       onDone();
     } catch (e) {
-      alert(`Upload failed: ${e}`);
+      setErr(`Upload failed — ${e}`);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="flex items-center gap-2">
-      <select className="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700" value={course} onChange={(e) => setCourse(e.target.value)}>
-        <option value="">Course…</option>
-        {courses.map((c) => (
-          <option key={c.id} value={c.id}>{c.code}</option>
-        ))}
-      </select>
-      <input ref={fileRef} type="file" accept="audio/*,video/*" className="hidden" onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])} />
-      <Button variant="primary" disabled={busy} onClick={() => fileRef.current?.click()}>
-        {busy ? "Transcribing…" : "⬆ Upload recording"}
-      </Button>
+    <div className="flex flex-col items-end gap-2">
+      <div className="flex items-center gap-2">
+        {/* Only worth asking when there's an actual choice to make. */}
+        {courses.length > 1 && (
+          <div className="w-32">
+            <Select
+              value={course}
+              onChange={(e) => setCourse(e.target.value)}
+              aria-label="Course for upload"
+            >
+              <option value="">Course…</option>
+              {courses.map((c) => (
+                <option key={c.id} value={c.id}>{c.code}</option>
+              ))}
+            </Select>
+          </div>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          accept="audio/*,video/*"
+          className="hidden"
+          onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
+        />
+        <Button variant="primary" disabled={busy} onClick={() => fileRef.current?.click()}>
+          {busy ? "Transcribing…" : "Upload recording"}
+        </Button>
+      </div>
+      {err && <Notice tone="error" className="max-w-sm">{err}</Notice>}
     </div>
   );
 }
@@ -187,18 +241,29 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
   const hasNotes = !!transcript?.summary;
   const effectiveTab = tab === "timestamps" && segments.length === 0 ? "transcript" : tab;
 
+  const tabs = [
+    { key: "notes" as const, label: "Study notes" },
+    { key: "transcript" as const, label: "Transcript" },
+    ...(segments.length ? [{ key: "timestamps" as const, label: "Timestamps" }] : []),
+  ];
+
   return (
     <Card className="p-6">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900">{lecture.title}</h2>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <Badge tone={isSlides ? "indigo" : "neutral"}>{lecture.provider}</Badge>
-            {done && <Badge tone="green">transcribed</Badge>}
-            {noRecording && <Badge tone="amber">no recording yet</Badge>}
-          </div>
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="font-display text-[22px] font-bold leading-snug tracking-tight text-ink">
+            {lecture.title}
+          </h2>
+          {/* Provider only when it's the unusual one; "transcribed" is implied
+              by the notes/transcript tabs being there at all. */}
+          {(isSlides || noRecording) && (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {isSlides && <Chip>slides</Chip>}
+              {noRecording && <Badge tone="amber">no recording yet</Badge>}
+            </div>
+          )}
         </div>
-        <div className="flex flex-wrap justify-end gap-2">
+        <div className="flex shrink-0 flex-wrap justify-end gap-2">
           {done && (
             <a href={`/api/export/lecture/${encodeURIComponent(id)}`} download>
               <Button size="sm">Download .md</Button>
@@ -211,45 +276,30 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
       </div>
 
       {busy && <Spinner label={status === "transcribing" ? "Transcribing & writing notes…" : "Downloading…"} />}
-      {status === "error" && <p className="text-sm text-rose-600">Error: {transcript?.error}</p>}
+      {status === "error" && <Notice tone="error">{transcript?.error}</Notice>}
 
       {done && (
         <>
-          {/* Tabs */}
-          <div className="mb-4 flex gap-1 border-b border-slate-200">
-            {([["notes", "📝 Study notes"], ["transcript", "Transcript"], ...(segments.length ? [["timestamps", "Timestamps"]] : [])] as [string, string][]).map(
-              ([k, label]) => (
-                <button
-                  key={k}
-                  onClick={() => setTab(k as typeof tab)}
-                  className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${
-                    effectiveTab === k
-                      ? "border-indigo-600 text-indigo-700"
-                      : "border-transparent text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  {label}
-                </button>
-              ),
-            )}
+          <div className="mb-4">
+            <Tabs tabs={tabs} value={effectiveTab} onChange={setTab} />
           </div>
 
           {effectiveTab === "notes" &&
             (hasNotes ? (
-              <div className="max-h-[64vh] overflow-y-auto rounded-xl bg-slate-50 p-5">
+              <div className="pane max-h-[64vh] rounded-card bg-chip/50 p-5">
                 <Markdown>{transcript!.summary!}</Markdown>
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-slate-300 p-8 text-center">
-                <p className="mb-3 text-sm text-slate-500">Turn this lecture into quick study notes.</p>
+              <div className="rounded-card border border-dashed border-hair p-10 text-center">
+                <p className="mb-4 text-sm text-ink-muted">Turn this lecture into quick study notes.</p>
                 <Button variant="primary" disabled={notesBusy} onClick={makeNotes}>
-                  {notesBusy ? "Writing notes…" : "✨ Generate study notes"}
+                  {notesBusy ? "Writing notes…" : "Generate study notes"}
                 </Button>
               </div>
             ))}
 
           {effectiveTab === "transcript" && (
-            <div className="max-h-[64vh] space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-5 text-[15px] leading-7 text-slate-700">
+            <div className="pane max-h-[64vh] space-y-3.5 rounded-card bg-chip/50 p-5 text-[15px] leading-7 text-ink-soft">
               {paragraphs.map((p, i) => (
                 <p key={i}>{p}</p>
               ))}
@@ -257,11 +307,13 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
           )}
 
           {effectiveTab === "timestamps" && (
-            <div className="max-h-[64vh] space-y-1.5 overflow-y-auto rounded-xl bg-slate-50 p-4 text-sm leading-relaxed text-slate-700">
+            <div className="pane max-h-[64vh] rounded-card bg-chip/50 p-4 text-sm leading-relaxed text-ink-soft">
               {segments.map((s, i) => (
-                <p key={i}>
-                  <span className="mr-2 select-none font-mono text-xs text-slate-400">{fmt(s.start)}</span>
-                  {s.text}
+                <p key={i} className="flex gap-3 rounded-field px-2 py-1 transition duration-150 hover:bg-surface">
+                  <span className="shrink-0 select-none pt-0.5 font-mono text-[11px] tabular-nums text-ink-muted">
+                    {fmt(s.start)}
+                  </span>
+                  <span>{s.text}</span>
                 </p>
               ))}
             </div>
@@ -270,12 +322,14 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
       )}
 
       {noRecording && (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-ink-muted">
           This class hasn't been recorded/published yet. It'll transcribe automatically once the recording appears.
         </p>
       )}
       {!busy && !done && !noRecording && (
-        <p className="text-sm text-slate-400">Not processed yet — click {isSlides ? "Extract text" : "Transcribe"}.</p>
+        <p className="text-sm text-ink-muted">
+          Not processed yet — click {isSlides ? "Extract text" : "Transcribe"}.
+        </p>
       )}
     </Card>
   );

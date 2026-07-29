@@ -1,6 +1,17 @@
 import { useEffect, useState } from "react";
 import { api, type Course, type EchoSection } from "../api.js";
-import { Card, PageHeader, Button, Badge } from "../ui.js";
+import {
+  Card,
+  PageHeader,
+  Button,
+  Badge,
+  Chip,
+  Input,
+  Select,
+  Segmented,
+  Details,
+  SectionTitle,
+} from "../ui.js";
 
 export function Settings() {
   const [hasKey, setHasKey] = useState(false);
@@ -36,7 +47,7 @@ export function Settings() {
     setBusy(true);
     try {
       const r = await api.gcalPush();
-      setMsg(r.ok ? `Pushed ${r.pushed} events to Google Calendar ✓` : `Error: ${r.error}`);
+      setMsg(r.ok ? `Pushed ${r.pushed} events to Google Calendar.` : `Error: ${r.error}`);
     } finally {
       setBusy(false);
     }
@@ -47,15 +58,15 @@ export function Settings() {
       <PageHeader title="Settings" subtitle="Connections & preferences" />
       <div className="space-y-5">
         <Card className="p-6">
-          <h2 className="mb-4 text-sm font-semibold text-slate-900">Connections</h2>
-          <div className="space-y-3">
+          <SectionTitle className="mb-5">Connections</SectionTitle>
+          <div className="divide-y divide-hair">
             <Row ok={hasToken} label="Moodle" okText="connected via API token" badText="add MOODLE_URL + MOODLE_TOKEN to .env" />
             <Row ok={hasKey} label="OpenAI" okText="connected" badText="add OPENAI_API_KEY to .env" />
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 py-3">
               <span className="flex items-center gap-2.5 text-sm">
                 <Dot ok={gcal.connected} />
-                <span className="font-medium text-slate-800">Google Calendar</span>
-                <span className={gcal.connected ? "text-emerald-600" : "text-amber-600"}>
+                <span className="font-medium text-ink">Google Calendar</span>
+                <span className={gcal.connected ? "text-accent-deep" : "text-ink-muted"}>
                   {gcal.connected ? "connected" : gcal.configured ? "not connected" : "sign-in unavailable — see note below"}
                 </span>
               </span>
@@ -71,16 +82,20 @@ export function Settings() {
             </div>
           </div>
           {gcal.configured && !gcal.connected && (
-            <div className="mt-3"><Button size="sm" variant="ghost" onClick={load}>I've connected — refresh</Button></div>
+            <div className="mt-4"><Button size="sm" variant="ghost" onClick={load}>I've connected — refresh</Button></div>
           )}
           {!gcal.configured && (
-            <p className="mt-3 rounded-lg bg-amber-50 p-3 text-xs leading-relaxed text-amber-800">
-              A “Sign in with Google” button needs a Google OAuth client, which Google only issues per project.
-              Add <code>GOOGLE_CLIENT_ID</code> + <code>GOOGLE_CLIENT_SECRET</code> to <code>.env</code> (2-min setup) to
-              enable one-click sign-in. Meanwhile, Apple Calendar can subscribe to the .ics feed on the Calendar page.
-            </p>
+            <Details summary="Why is Google sign-in unavailable?" className="mt-4">
+              A “Sign in with Google” button needs a Google OAuth client, which Google only issues per
+              project. Add <Chip>GOOGLE_CLIENT_ID</Chip> + <Chip>GOOGLE_CLIENT_SECRET</Chip> to{" "}
+              <Chip>.env</Chip> (2-min setup) to enable one-click sign-in.
+            </Details>
           )}
-          {msg && <p className="mt-3 text-sm text-slate-600">{msg}</p>}
+          {msg && <p className="mt-4 text-sm text-ink-muted">{msg}</p>}
+
+          <p className="mt-5 border-t border-hair pt-4 text-[13px] leading-relaxed text-ink-muted">
+            Or subscribe any calendar app to <Chip>{location.origin}/api/calendar.ics</Chip>
+          </p>
         </Card>
 
         <Echo360Card />
@@ -88,30 +103,18 @@ export function Settings() {
         <TimetableCard />
 
         <Card className="p-6">
-          <h2 className="mb-1 text-sm font-semibold text-slate-900">Deadline reminders</h2>
-          <p className="mb-3 text-xs text-slate-500">Days before a due date to flag it (and set the Google reminder).</p>
-          <div className="flex flex-wrap gap-2">
-            {[1, 2, 3, 5, 7, 14].map((d) => (
-              <button
-                key={d}
-                onClick={async () => { setReminder(d); await api.setReminderDays(d); }}
-                className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition ${
-                  reminder === d ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-                }`}
-              >
-                {d} day{d > 1 ? "s" : ""}
-              </button>
-            ))}
-          </div>
-        </Card>
-
-        <Card className="p-6">
-          <h2 className="mb-1 text-sm font-semibold text-slate-900">Study pack export</h2>
-          <p className="mb-3 text-xs text-slate-500">
-            Every active course as Markdown (transcripts, slide text, forum posts) plus a CLAUDE.md
-            tutor guide — zipped for any LLM.
+          <SectionTitle className="mb-1.5">Deadline reminders</SectionTitle>
+          <p className="mb-4 text-[13px] leading-relaxed text-ink-muted">
+            Days before a due date to flag it (and set the Google reminder).
           </p>
-          <a href="/api/export/all" download><Button variant="primary">Download study pack</Button></a>
+          <div className="max-w-md">
+            <Segmented
+              options={[1, 2, 3, 5, 7, 14]}
+              value={reminder}
+              onChange={async (d) => { setReminder(d); await api.setReminderDays(d); }}
+              format={(d) => `${d}d`}
+            />
+          </div>
         </Card>
       </div>
     </div>
@@ -135,7 +138,7 @@ function TimetableCard() {
       await api.saveSettings({ timetable_url: url });
       setSaved(true);
       const r = await api.sync();
-      setMsg(r.ok ? `Imported ✓ ${r.counts?.classes ?? 0} class sessions` : `Sync error: ${r.error}`);
+      setMsg(r.ok ? `Imported ${r.counts?.classes ?? 0} class sessions.` : `Sync error: ${r.error}`);
     } catch (e) {
       setMsg(`Failed: ${e}`);
     } finally {
@@ -145,24 +148,26 @@ function TimetableCard() {
 
   return (
     <Card className="p-6">
-      <h2 className="mb-1 text-sm font-semibold text-slate-900">Class timetable</h2>
-      <p className="mb-3 text-xs leading-relaxed text-slate-500">
-        Paste your university timetable's <strong>iCal / “subscribe” URL</strong> (from UC’s timetable
-        site — look for Export / Subscribe / “Add to calendar”). Recurring classes and rooms populate
-        your calendar and the “Today’s schedule” panel.
+      <SectionTitle className="mb-1.5">Class timetable</SectionTitle>
+      <p className="mb-4 text-[13px] text-ink-muted">
+        Paste your timetable's iCal subscribe URL.
       </p>
-      <div className="flex gap-2">
-        <input
-          className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
+      <div className="flex max-w-2xl gap-2">
+        <Input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder="https://mytimetable.canterbury.ac.nz/…/timetable.ics"
+          aria-label="Timetable iCal URL"
         />
-        <Button variant="primary" onClick={saveAndSync} disabled={busy || !url.trim()}>
+        <Button variant="primary" onClick={saveAndSync} disabled={busy || !url.trim()} className="shrink-0">
           {busy ? "Importing…" : saved ? "Re-import" : "Import"}
         </Button>
       </div>
-      {msg && <p className="mt-3 text-sm text-slate-600">{msg}</p>}
+      <Details summary="Where do I find it?" className="mt-4">
+        On UC's timetable site, look for Export / Subscribe / “Add to calendar”. Recurring classes and
+        rooms then populate your calendar and today's schedule.
+      </Details>
+      {msg && <p className="mt-4 text-sm text-ink-muted">{msg}</p>}
     </Card>
   );
 }
@@ -207,7 +212,7 @@ function Echo360Card() {
       setConnected(r.connected);
       setMsg(
         r.connected
-          ? "Connected ✓ — downloading & transcribing your lectures now (this runs in the background)."
+          ? "Connected — downloading & transcribing your lectures now (this runs in the background)."
           : r.error ?? "Not connected yet — log in in the window, then try again.",
       );
     } finally {
@@ -234,7 +239,7 @@ function Echo360Card() {
       const c = r.counts;
       setMsg(
         r.ok && c
-          ? `Done ✓ ${c.transcribed} transcribed · ${c.noRecording} not recorded yet · ${c.failed} failed (of ${c.lessons} classes)`
+          ? `Done — ${c.transcribed} transcribed · ${c.noRecording} not recorded yet · ${c.failed} failed (of ${c.lessons} classes)`
           : `Error: ${r.error}`,
       );
     } catch (e) {
@@ -246,17 +251,18 @@ function Echo360Card() {
 
   return (
     <Card className="p-6">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-900">Echo360 lecture recordings</h2>
-        {connected ? <Badge tone="green">connected</Badge> : <Badge tone="amber">not connected</Badge>}
-      </div>
-      <p className="mb-4 text-xs leading-relaxed text-slate-500">
-        Connect and log in <strong>once</strong> — your session is saved, so new lecture recordings
-        <strong> auto-download and transcribe every time the app launches</strong>, with no re-login.
-        If Echo eventually signs you out, just reconnect.
+      <SectionTitle
+        className="mb-1.5"
+        action={connected ? <Badge tone="green">connected</Badge> : <Badge tone="amber">not connected</Badge>}
+      >
+        Echo360 lecture recordings
+      </SectionTitle>
+      <p className="mb-5 text-[13px] text-ink-muted">
+        Log in <strong className="font-semibold text-ink">once</strong> — new recordings then
+        auto-transcribe on every launch.
       </p>
 
-      <div className="mb-4 flex flex-wrap gap-2">
+      <div className="mb-6 flex flex-wrap gap-2">
         <Button size="sm" onClick={connect} disabled={busy === "connect"}>
           {busy === "connect" ? "Opening…" : connected ? "Reconnect" : "Connect Echo360"}
         </Button>
@@ -268,26 +274,34 @@ function Echo360Card() {
         </Button>
       </div>
 
-      <div className="space-y-2">
-        <div className="text-xs font-medium text-slate-500">Sections → course</div>
-        {sections.map((s) => (
-          <div key={s.sectionId} className="flex items-center gap-2 text-sm">
-            <span className="flex-1 truncate text-slate-700">{s.label || s.sectionId}</span>
-            <select
-              className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs"
-              value={s.courseId ?? ""}
-              onChange={(e) => assign(s.sectionId, e.target.value)}
-            >
-              <option value="">Unassigned</option>
-              {courses.map((c) => (
-                <option key={c.id} value={c.id}>{c.code}</option>
-              ))}
-            </select>
-          </div>
-        ))}
+      {/* Section mapping only matters once there's a live session. */}
+      <div className={`max-w-xl ${connected ? "" : "hidden"}`}>
+        <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
+          Sections → course
+        </div>
+        <div className="divide-y divide-hair">
+          {sections.map((s) => (
+            <div key={s.sectionId} className="flex items-center gap-3 py-2.5 text-sm">
+              <span className="min-w-0 flex-1 truncate text-ink">{s.label || s.sectionId}</span>
+              <div className="w-40 shrink-0">
+                <Select
+                  density="sm"
+                  value={s.courseId ?? ""}
+                  onChange={(e) => assign(s.sectionId, e.target.value)}
+                  aria-label={`Course for section ${s.label || s.sectionId}`}
+                >
+                  <option value="">Unassigned</option>
+                  {courses.map((c) => (
+                    <option key={c.id} value={c.id}>{c.code}</option>
+                  ))}
+                </Select>
+              </div>
+            </div>
+          ))}
+        </div>
         <AddSection onAdd={addSection} />
       </div>
-      {msg && <p className="mt-3 text-sm text-slate-600">{msg}</p>}
+      {msg && <p className="mt-4 text-sm text-ink-muted">{msg}</p>}
     </Card>
   );
 }
@@ -295,27 +309,35 @@ function Echo360Card() {
 function AddSection({ onAdd }: { onAdd: (raw: string) => void }) {
   const [v, setV] = useState("");
   return (
-    <div className="flex gap-2 pt-1">
-      <input
-        className="flex-1 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs"
+    <div className="flex gap-2 pt-3">
+      <Input
+        density="sm"
         placeholder="Paste an Echo360 section URL or ID to add a course…"
         value={v}
         onChange={(e) => setV(e.target.value)}
+        aria-label="Echo360 section URL or ID"
       />
-      <Button size="sm" onClick={() => { onAdd(v); setV(""); }} disabled={!v.trim()}>Add</Button>
+      <Button size="sm" onClick={() => { onAdd(v); setV(""); }} disabled={!v.trim()} className="shrink-0">
+        Add
+      </Button>
     </div>
   );
 }
 
 function Dot({ ok }: { ok: boolean }) {
-  return <span className={`h-2.5 w-2.5 rounded-full ${ok ? "bg-emerald-500" : "bg-amber-400"}`} />;
+  return (
+    <span
+      className={`h-2 w-2 shrink-0 rounded-pill ${ok ? "bg-accent-deep" : "bg-amber-400"}`}
+      aria-hidden="true"
+    />
+  );
 }
 function Row({ ok, label, okText, badText }: { ok: boolean; label: string; okText: string; badText: string }) {
   return (
-    <div className="flex items-center gap-2.5 text-sm">
+    <div className="flex flex-wrap items-center gap-2.5 py-3 text-sm">
       <Dot ok={ok} />
-      <span className="font-medium text-slate-800">{label}</span>
-      <span className={ok ? "text-emerald-600" : "text-amber-600"}>{ok ? okText : badText}</span>
+      <span className="font-medium text-ink">{label}</span>
+      <span className={ok ? "text-accent-deep" : "text-ink-muted"}>{ok ? okText : badText}</span>
     </div>
   );
 }

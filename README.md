@@ -21,41 +21,40 @@ except to talk directly to Moodle, Echo360 and OpenAI.
 
 ## Quick start
 
-**Prerequisites:** [Node.js](https://nodejs.org) ≥ 20, [ffmpeg](https://ffmpeg.org)
-(`brew install ffmpeg` / `apt install ffmpeg`), a Moodle **Web Services token**, and an
-**OpenAI API key**.
+**Prerequisites:** [Node.js](https://nodejs.org) ≥ 20 and [ffmpeg](https://ffmpeg.org)
+(`brew install ffmpeg` / `apt install ffmpeg`). You'll also want an
+[OpenAI API key](https://platform.openai.com/api-keys) — the app will ask for it.
 
 ```bash
 git clone https://github.com/dylanllove/Moodle_integration.git
 cd Moodle_integration
 npm install
 npx playwright install chromium     # for the Echo360 login/transcription
-cp .env.example .env                # then edit .env (see below)
 npm run dev                         # open http://localhost:5173
 ```
 
-### Fill in `.env`
+That's it — **no `.env` editing needed.** On first launch the app opens a guided setup at
+**http://localhost:5173/setup** that connects Moodle, saves your OpenAI key and imports your
+timetable, writing `.env` for you. You can reopen it any time from **Finish setup** in the sidebar.
 
-```ini
-MOODLE_URL=https://learn.your-uni.ac.nz
-MOODLE_TOKEN=your-moodle-webservices-token
-OPENAI_API_KEY=sk-...
-```
+### What setup asks for
 
-**Getting your Moodle token:** in Moodle go to **Preferences → Security keys**, and copy the token
-for the *Moodle mobile web service* (if it's not enabled, ask your IT/eLearning team to turn on
-Web Services + the mobile service — most unis have it on).
+| Step | What it does |
+| --- | --- |
+| **Moodle** | Sign in with your university username and password and Moodle mints its own access token — the same mechanism the official Moodle app uses. Your password is sent once to your university and never stored. If your uni logs in via Microsoft/Google/Okta, switch to the **Paste a token** tab. |
+| **OpenAI key** | Validated against OpenAI before saving. Powers transcripts, notes, cheat sheets and chat. |
+| **Timetable** | Paste your timetable's iCal *subscribe* link. It's fetched and imported straight away so you see the class count. A `.ics` file dropped in the project folder is also auto-detected. |
+| **Echo360** | Optional. Log in once and new recordings download + transcribe on every launch. |
+
+**If password sign-in doesn't work** (single sign-on, or web services restricted), open
+**Preferences → Security keys** in Moodle — or `<your-moodle>/user/managetoken.php` — and copy the
+key for the *Moodle mobile web service*. Paste it into the **Paste a token** tab. The setup page also
+offers a ready-made prompt for a browser assistant if you can't find that page. If your site has web
+services switched off entirely, ask your IT/eLearning team to enable Web Services + the mobile
+service; most universities already have it on.
 
 Optional: `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` for live Google Calendar sync — see `.env.example`.
-
-### First run
-
-1. Open **http://localhost:5173** → it syncs Moodle automatically.
-2. **Settings → Class timetable** — paste your uni timetable's iCal/"subscribe" URL, *or* drop the
-   `.ics` file into the project folder (it's auto-detected).
-3. **Settings → Echo360** — click **Connect Echo360**, log in, and keep that window open.
-   Transcription of your lectures starts automatically.
-4. **Courses → ✨ Cheat sheet**, or **Download study pack**, whenever you want.
+Setup deliberately skips Google Calendar; nothing depends on it.
 
 ---
 

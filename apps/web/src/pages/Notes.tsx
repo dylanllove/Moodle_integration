@@ -1,7 +1,16 @@
 import { useEffect, useState } from "react";
 import { api, type Note } from "../api.js";
 import { Markdown } from "../Markdown.js";
-import { Card, PageHeader, Button, Badge, EmptyState, Loading } from "../ui.js";
+import {
+  Card,
+  PageHeader,
+  Button,
+  Badge,
+  Textarea,
+  SectionTitle,
+  EmptyState,
+  Loading,
+} from "../ui.js";
 
 export function Notes() {
   const [notes, setNotes] = useState<Note[]>([]);
@@ -29,26 +38,38 @@ export function Notes() {
       <PageHeader
         title="Notes"
         subtitle="Your notes & AI-generated cheat sheets"
-        actions={<Button variant="primary" onClick={newNote}>+ New note</Button>}
+        actions={<Button variant="primary" onClick={newNote}>New note</Button>}
       />
       {loading && <Loading label="Loading notes…" />}
       <div className={`grid grid-cols-1 gap-6 lg:grid-cols-[18rem_1fr] ${loading ? "hidden" : ""}`}>
-        <div className="space-y-1.5">
+        <div className="space-y-1">
           {notes.length === 0 ? (
             <EmptyState icon="📝">No notes yet. Generate a cheat sheet from Courses, or add one.</EmptyState>
           ) : (
             notes.map((n) => {
               const isCheat = /^cheat sheet/i.test(n.title);
+              const active = selected === n.id;
               return (
                 <button
                   key={n.id}
                   onClick={() => setSelected(n.id)}
-                  className={`w-full rounded-xl border px-3.5 py-3 text-left transition ${
-                    selected === n.id ? "border-indigo-200 bg-indigo-50" : "border-slate-200 bg-white hover:border-slate-300"
+                  aria-current={active}
+                  className={`w-full rounded-field px-3.5 py-3 text-left transition duration-200 ${
+                    active ? "bg-accent-tint" : "hover:bg-chip"
                   }`}
                 >
-                  <div className="truncate text-sm font-medium text-slate-900">{n.title || "Untitled"}</div>
-                  {isCheat && <div className="mt-1"><Badge tone="indigo">cheat sheet</Badge></div>}
+                  <div
+                    className={`truncate text-sm ${
+                      active ? "font-semibold text-accent-deep" : "font-medium text-ink"
+                    }`}
+                  >
+                    {n.title || "Untitled"}
+                  </div>
+                  {isCheat && (
+                    <div className="mt-1.5">
+                      <Badge tone="accent">cheat sheet</Badge>
+                    </div>
+                  )}
                 </button>
               );
             })
@@ -95,40 +116,61 @@ function Editor({ id, onChange }: { id: string; onChange: () => void }) {
   if (!note) return null;
   return (
     <Card className="p-6">
-      <div className="mb-4 flex items-center gap-2">
+      <div className="mb-5 flex items-center gap-2">
+        {/* Title edits in place — no border until you're actually in it. */}
         <input
-          className="flex-1 rounded-lg border border-transparent bg-transparent px-1 text-lg font-semibold text-slate-900 outline-none focus:border-slate-200"
+          className="min-w-0 flex-1 rounded-field border border-transparent bg-transparent px-2 py-1 font-display text-[22px] font-bold tracking-tight text-ink outline-none transition duration-200 hover:border-hair focus:border-accent-deep/40 focus:ring-2 focus:ring-accent-deep/15"
           value={note.title}
           onChange={(e) => setNote({ ...note, title: e.target.value })}
           onBlur={() => save({ title: note.title })}
+          aria-label="Note title"
         />
         <Button size="sm" onClick={() => setEdit((v) => !v)}>{edit ? "Preview" : "Edit"}</Button>
-        <Button size="sm" disabled={busy} onClick={makeCards}>{busy ? "…" : "Flashcards"}</Button>
+        <Button size="sm" disabled={busy} onClick={makeCards}>{busy ? "Working…" : "Flashcards"}</Button>
         <Button size="sm" variant="ghost" onClick={remove}>Delete</Button>
       </div>
 
       {edit ? (
-        <textarea
-          className="min-h-[55vh] w-full rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-sm text-slate-700 outline-none"
+        <Textarea
+          className="min-h-[55vh] bg-chip/50 font-mono text-[13px] text-ink-soft"
           value={note.body}
           onChange={(e) => setNote({ ...note, body: e.target.value })}
           onBlur={() => save({ body: note.body })}
           placeholder="Write in markdown…"
         />
       ) : (
-        <div className="min-h-[40vh] rounded-xl bg-white">
+        <div className="min-h-[40vh]">
           <Markdown>{note.body || "_Empty note._"}</Markdown>
         </div>
       )}
 
       {cards && (
-        <div className="mt-5">
-          <h3 className="mb-2 text-sm font-semibold text-slate-900">Flashcards</h3>
+        <div className="mt-7 border-t border-hair pt-5">
+          <SectionTitle className="mb-3">Flashcards</SectionTitle>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             {cards.map((c, i) => (
-              <details key={i} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
-                <summary className="cursor-pointer font-medium text-slate-800">{c.q}</summary>
-                <p className="mt-2 text-slate-600">{c.a}</p>
+              <details
+                key={i}
+                className="group rounded-field bg-chip/60 p-3.5 text-sm transition duration-200 hover:bg-chip"
+              >
+                <summary className="flex cursor-pointer items-start gap-2 font-medium text-ink marker:content-none">
+                  <span className="mt-1 text-ink-muted transition duration-200 group-open:rotate-90">
+                    <svg
+                      className="h-3 w-3"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="m9 6 6 6-6 6" />
+                    </svg>
+                  </span>
+                  {c.q}
+                </summary>
+                <p className="mt-2 pl-5 text-ink-muted">{c.a}</p>
               </details>
             ))}
           </div>

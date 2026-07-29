@@ -1,5 +1,47 @@
 @import "tailwindcss";
 
+/* ============================================================================
+   Editorial-calm token layer — apricot & terracotta.
+   One warm accent against white space, anchored by a heavy display serif.
+   Retune the whole visual system from this block.
+
+   The accent has two halves and they are not interchangeable:
+     --color-accent       bright apricot. BACKGROUND ONLY (swash, CTA pills).
+                          At 1.9:1 on white it fails as text; ink on it is 10.4:1.
+     --color-accent-deep  terracotta. All accent TEXT, icons, focus rings (6.2:1).
+   ============================================================================ */
+@theme {
+  /* --- Color ------------------------------------------------------------- */
+  --color-page: #ffffff; /* clean white page — not ivory */
+  --color-surface: #ffffff; /* cards: separated by hairline + soft shadow */
+  --color-ink: #17170f; /* near-black, faintly warm — headings & body */
+  --color-ink-soft: #33332b; /* long-form body copy: transcripts, notes */
+  --color-ink-muted: #6e6e66; /* sub-copy, captions, attributions (5.2:1 on white) */
+  --color-accent: #ffb570; /* apricot — background only, never text */
+  --color-accent-tint: #ffebdb; /* pale wash: selected states, next-up */
+  --color-accent-deep: #9a4a21; /* terracotta — accent *text* & icons (6.2:1) */
+  --color-pill: #1c1c18; /* near-black filled pill (active toggle) */
+  --color-hair: #eae6e0; /* hairline border on cards — warm neutral */
+  --color-chip: #f3f0ea; /* citation-chip / tag background */
+
+  /* --- Type -------------------------------------------------------------- */
+  /* The display serif does most of the personality work. Fraunces at a black
+     weight, falling back to the best system old-style serifs when offline. */
+  --font-display: "Fraunces", "Iowan Old Style", "Palatino Linotype", Palatino,
+    Georgia, serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+
+  /* --- Shape & depth ----------------------------------------------------- */
+  /* Only three radii exist. Cards and panels, form fields, everything else. */
+  --radius-card: 14px;
+  --radius-field: 10px;
+  --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(23, 23, 15, 0.05), 0 10px 30px rgba(23, 23, 15, 0.06);
+  --shadow-lift: 0 2px 4px rgba(23, 23, 15, 0.06), 0 16px 40px rgba(23, 23, 15, 0.09);
+}
+
 html {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
@@ -7,35 +49,222 @@ html {
 
 body {
   margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  background: #f8fafc;
-  color: #0f172a;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--color-ink);
+  /* Faint graph-paper dot grid across the page. */
+  background-color: var(--color-page);
+  background-image: radial-gradient(rgba(23, 23, 15, 0.075) 1px, transparent 1px);
+  background-size: 22px 22px;
+  background-position: -11px -11px;
 }
 
 ::selection {
-  background: #e0e7ff;
+  background: var(--color-accent);
+  color: var(--color-ink);
 }
 
-/* Rendered markdown (notes, cheat sheets, AI output) */
+/* Visible focus everywhere — terracotta reads as intent without shouting. */
+:focus-visible {
+  outline: 2px solid var(--color-accent-deep);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   Highlighter-marker swash — the signature move.
+   An irregular, hand-drawn apricot stroke sitting *behind* near-black serif text,
+   slightly rotated with ends that overshoot. Never a clean rectangle.
+   Usage: <span class="swash">word</span>
+   --------------------------------------------------------------------------- */
+.swash {
+  position: relative;
+  display: inline-block;
+  isolation: isolate;
+}
+.swash::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0.18em -0.2em 0.02em -0.16em;
+  background: var(--color-accent);
+  /* Uneven radii read as a marker blob rather than a shape. */
+  border-radius: 48% 52% 44% 56% / 62% 40% 60% 38%;
+  transform: rotate(-1.4deg) skewX(-7deg);
+}
+/* A second, fainter pass — marker ink overlapping itself at the ends. */
+.swash::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0.42em -0.24em 0.1em -0.06em;
+  background: var(--color-accent);
+  opacity: 0.75;
+  border-radius: 60% 40% 55% 45% / 50% 55% 45% 50%;
+  transform: rotate(0.7deg) skewX(-4deg);
+}
+
+/* ---------------------------------------------------------------------------
+   Form fields. One look, one radius, one terracotta focus ring.
+   Deliberately in @layer base so that any Tailwind utility a caller passes
+   (bg-chip, text-[13px], min-h-…) reliably wins over these defaults.
+   --------------------------------------------------------------------------- */
+@layer base {
+  .field {
+    width: 100%;
+    border-radius: var(--radius-field);
+    border: 1px solid var(--color-hair);
+    background: var(--color-surface);
+    padding: 0.625rem 0.875rem;
+    font-size: 0.875rem;
+    line-height: 1.45;
+    color: var(--color-ink);
+    outline: none;
+    transition:
+      border-color 200ms ease,
+      box-shadow 200ms ease;
+  }
+  .field::placeholder {
+    color: color-mix(in srgb, var(--color-ink-muted) 65%, transparent);
+  }
+  .field:focus,
+  .field:focus-visible {
+    outline: none;
+    border-color: color-mix(in srgb, var(--color-accent-deep) 45%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent-deep) 15%, transparent);
+  }
+  .field:disabled {
+    opacity: 0.5;
+  }
+  /* Compact density for inline/secondary fields. */
+  .field-sm {
+    padding: 0.375rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Scroll panes — thin, self-effacing scrollbars. A chunky default scrollbar
+   inside a card is the single biggest source of "clunky".
+   --------------------------------------------------------------------------- */
+.pane {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-ink) 18%, transparent) transparent;
+}
+.pane::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.pane::-webkit-scrollbar-track {
+  background: transparent;
+}
+.pane::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-ink) 16%, transparent);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: var(--radius-pill);
+}
+.pane::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-ink) 30%, transparent);
+  background-clip: content-box;
+}
+
+/* ---------------------------------------------------------------------------
+   Motion — restrained. Short fade/rise, no parallax, no springs.
+   --------------------------------------------------------------------------- */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.reveal {
+  animation: rise 250ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Rendered markdown (notes, cheat sheets, AI output)
+   --------------------------------------------------------------------------- */
 .md {
   font-size: 0.9rem;
   line-height: 1.7;
-  color: #1e293b;
+  color: #33332b;
 }
-.md h1 { font-size: 1.4rem; font-weight: 700; margin: 1.2rem 0 0.6rem; }
-.md h2 { font-size: 1.15rem; font-weight: 650; margin: 1.1rem 0 0.5rem; padding-bottom: 0.3rem; border-bottom: 1px solid #e2e8f0; }
-.md h3 { font-size: 1rem; font-weight: 600; margin: 0.9rem 0 0.4rem; }
+.md h1 {
+  font-family: var(--font-display);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--color-ink);
+  margin: 1.2rem 0 0.6rem;
+}
+.md h2 {
+  font-family: var(--font-display);
+  font-size: 1.2rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--color-ink);
+  margin: 1.1rem 0 0.5rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--color-hair);
+}
+.md h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-ink);
+  margin: 0.9rem 0 0.4rem;
+}
 .md p { margin: 0.5rem 0; }
 .md ul, .md ol { margin: 0.5rem 0; padding-left: 1.4rem; }
 .md ul { list-style: disc; }
 .md ol { list-style: decimal; }
 .md li { margin: 0.2rem 0; }
-.md code { background: #f1f5f9; border-radius: 4px; padding: 0.1rem 0.35rem; font-size: 0.85em; }
-.md pre { background: #f1f5f9; border-radius: 10px; padding: 0.9rem; overflow-x: auto; }
+.md li::marker { color: var(--color-accent-deep); }
+.md code {
+  background: var(--color-chip);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.85em;
+}
+.md pre {
+  background: var(--color-chip);
+  border: 1px solid var(--color-hair);
+  border-radius: 10px;
+  padding: 0.9rem;
+  overflow-x: auto;
+}
 .md pre code { background: none; padding: 0; }
-.md strong { color: #0f172a; }
-.md em { color: #475569; }
-.md blockquote { border-left: 3px solid #c7d2fe; padding-left: 0.9rem; color: #475569; margin: 0.6rem 0; }
-.md a { color: #4f46e5; text-decoration: underline; }
+.md strong { color: var(--color-ink); }
+.md em { color: var(--color-ink-muted); }
+.md blockquote {
+  border-left: 3px solid var(--color-accent);
+  padding-left: 0.9rem;
+  color: var(--color-ink-muted);
+  margin: 0.6rem 0;
+}
+.md a {
+  color: var(--color-accent-deep);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
 .md table { border-collapse: collapse; margin: 0.6rem 0; font-size: 0.85rem; }
-.md th, .md td { border: 1px solid #e2e8f0; padding: 0.4rem 0.6rem; }
+.md th, .md td { border: 1px solid var(--color-hair); padding: 0.4rem 0.6rem; }
+.md th { background: var(--color-chip); font-weight: 600; }
