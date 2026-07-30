@@ -2,7 +2,17 @@ import type { FastifyInstance } from "fastify";
 import { getSetting, setSetting } from "@uni/db";
 
 /** Keys the UI is allowed to read/write. API key stays server-side only. */
-const PUBLIC_KEYS = ["lms_url", "ical_url", "timetable_url", "gcal_sync_enabled", "gcal_calendar_id"] as const;
+const PUBLIC_KEYS = [
+  "lms_url",
+  "ical_url",
+  "timetable_url",
+  "gcal_sync_enabled",
+  "gcal_calendar_id",
+  "auto_materials",
+  "auto_flashcards",
+  "auto_push_on_sync",
+  "app_url",
+] as const;
 
 export async function registerSettingsRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/settings", async () => {

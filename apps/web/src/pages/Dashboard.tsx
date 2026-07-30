@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type CalEvent, type Course } from "../api.js";
+import { api, type CalEvent, type Course, type WeekLoad } from "../api.js";
 import {
   Card,
   PageHeader,
@@ -22,6 +22,9 @@ export function Dashboard() {
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [reminderDays, setReminderDays] = useState(3);
+  const [thisWeek, setThisWeek] = useState<WeekLoad | null>(null);
+  const [crunch, setCrunch] = useState<WeekLoad | null>(null);
+  const [cardsDue, setCardsDue] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -38,6 +41,19 @@ export function Dashboard() {
         setReminderDays(r.days);
       })
       .finally(() => setLoading(false));
+
+    // Secondary, non-blocking: the week's shape and any cards waiting.
+    api
+      .workload(8)
+      .then((w) => {
+        setThisWeek(w.weeks.find((x) => x.isCurrent) ?? null);
+        setCrunch(w.crunch.find((x) => !x.isCurrent) ?? null);
+      })
+      .catch(() => {});
+    api
+      .decks()
+      .then((d) => setCardsDue(d.decks.reduce((n, deck) => n + deck.due, 0)))
+      .catch(() => {});
   }, []);
 
   const courseCode = (id: string | null) => courses.find((c) => c.id === id)?.code ?? "General";
@@ -96,6 +112,48 @@ export function Dashboard() {
 
       {/* First-run guidance when nothing's synced yet */}
       {!loading && courses.length === 0 && <GettingStarted />}
+
+      {/* The week at a glance — hours, what's due, what's waiting to be drilled. */}
+      {!loading && courses.length > 0 && (
+        <Reveal className="mb-8">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <StatCard
+              to="/workload"
+              label="This week"
+              value={thisWeek ? `${Math.round(thisWeek.totalHours)}h` : "—"}
+              detail={thisWeek ? VERDICT_TEXT[thisWeek.verdict] : "workload"}
+            />
+            <StatCard
+              to="/calendar"
+              label="Due in 7 days"
+              value={String(
+                deadlines.filter(
+                  (e) => new Date(e.start_at).getTime() - Date.now() <= 7 * 864e5,
+                ).length,
+              )}
+              detail="deadlines & exams"
+            />
+            <StatCard
+              to="/flashcards"
+              label="Cards due"
+              value={String(cardsDue)}
+              detail={cardsDue > 0 ? "ready to review" : "all clear"}
+            />
+          </div>
+          {crunch && (
+            <Card className="mt-3 bg-second-tint/50 p-4">
+              <p className="text-sm text-ink">
+                <strong className="font-semibold">Heads up:</strong> {crunch.weekLabel} looks{" "}
+                {crunch.verdict} — {crunch.drivers.slice(0, 2).map((d) => d.title).join(" and ")}
+                {crunch.drivers.length > 2 ? ` plus ${crunch.drivers.length - 2} more` : ""}.{" "}
+                <Link to="/workload" className="font-medium text-accent-deep hover:underline">
+                  See the semester →
+                </Link>
+              </p>
+            </Card>
+          )}
+        </Reveal>
+      )}
 
       {/* Today's timetable — framed as its own little surface */}
       <Reveal className="mb-8">
@@ -180,6 +238,42 @@ export function Dashboard() {
       )}
       </div>
     </div>
+  );
+}
+
+const VERDICT_TEXT: Record<WeekLoad["verdict"], string> = {
+  unknown: "no deadlines published yet",
+  quiet: "quiet — get ahead",
+  steady: "steady going",
+  busy: "busy",
+  heavy: "heavy — start early",
+  brutal: "brutal",
+};
+
+/** Three numbers that answer "how bad is it", each a door to the detail. */
+function StatCard({
+  to,
+  label,
+  value,
+  detail,
+}: {
+  to: string;
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <Link to={to}>
+      <Card hover className="p-4">
+        <div className="text-[11px] font-semibold uppercase tracking-[0.1em] text-ink-muted">
+          {label}
+        </div>
+        <div className="mt-1.5 font-display text-[26px] font-bold leading-none tracking-tight text-ink">
+          {value}
+        </div>
+        <div className="mt-1.5 text-[13px] text-ink-muted">{detail}</div>
+      </Card>
+    </Link>
   );
 }
 

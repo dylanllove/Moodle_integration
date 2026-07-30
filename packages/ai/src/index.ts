@@ -4,10 +4,12 @@ export {
   transcriptToNotes,
   explain,
   flashcards,
+  generateDeck,
   cheatSheet,
   cleanTranscript,
   lectureNotes,
   type Flashcard,
+  type DeckOpts,
 } from "./study.js";
 export {
   indexAll,

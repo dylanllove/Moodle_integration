@@ -147,6 +147,67 @@ export async function flashcards(text: string): Promise<Flashcard[]> {
   return parseJsonArray(raw);
 }
 
+export interface DeckOpts {
+  /** What the material is, so questions can name the right topic. */
+  title?: string;
+  courseName?: string;
+  /** Target card count. The model is told to stop early rather than pad. */
+  count?: number;
+}
+
+/**
+ * Deck-quality flashcards for spaced repetition — the difference from
+ * `flashcards()` is the constraints: one fact per card, answers short enough to
+ * recall out loud, no "what did the lecturer say about…" trivia, and no padding
+ * to hit a number. Bad cards are worse than no cards; you drill them for weeks.
+ */
+export async function generateDeck(text: string, opts: DeckOpts = {}): Promise<Flashcard[]> {
+  const count = Math.min(60, Math.max(5, opts.count ?? 20));
+  const raw = await complete(
+    `Write up to ${count} spaced-repetition flashcards from the material below${
+      opts.title ? ` (from "${opts.title}"` : ""
+    }${opts.courseName ? `${opts.title ? ", " : " ("}course: ${opts.courseName}` : ""}${
+      opts.title || opts.courseName ? ")" : ""
+    }.
+
+Rules:
+- ONE testable fact, definition, mechanism or distinction per card.
+- Questions must stand alone — never "what did the slide say", "according to the lecturer", or "in this lecture". A card must make sense months later with no context.
+- Answers: 1–2 sentences, or a short list. Short enough to say out loud from memory.
+- Prefer what an exam would actually ask: definitions, why/how, comparisons, worked steps, formulae, common mistakes.
+- Skip admin (due dates, room numbers, staff names), and skip anything the material doesn't actually explain.
+- Fewer good cards beats padding to the limit. Stop when the real content runs out.
+
+Respond with ONLY a JSON array of {"q":"…","a":"…"} — no prose, no markdown fences.
+
+MATERIAL:
+${clamp(text, 60_000)}`,
+    {
+      system:
+        "You are an expert at writing flashcards for active recall. You output strictly valid JSON and nothing else, and you never invent facts absent from the material.",
+      maxTokens: 4000,
+      temperature: 0.2,
+    },
+  );
+  return dedupe(parseJsonArray(raw));
+}
+
+/** Same question asked twice is a card you'll resent in week three. */
+function dedupe(cards: Flashcard[]): Flashcard[] {
+  const seen = new Set<string>();
+  const out: Flashcard[] = [];
+  for (const c of cards) {
+    const q = c.q.trim();
+    const a = c.a.trim();
+    if (!q || !a) continue;
+    const key = q.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ q, a });
+  }
+  return out;
+}
+
 function parseJsonArray(raw: string): Flashcard[] {
   const cleaned = raw.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
   try {

@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SCHEMA_SQL } from "./schema.js";
+import { INDEX_SQL, SCHEMA_SQL } from "./schema.js";
 
 export * from "./types.js";
 export type { DatabaseSync } from "node:sqlite";
@@ -28,8 +28,11 @@ export function getDb(): DatabaseSync {
   mkdirSync(dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec("PRAGMA busy_timeout = 5000;");
+  // Tables, then added columns, then indexes — an index over a column that
+  // migrate() is about to add can't be created before it exists.
   db.exec(SCHEMA_SQL);
   migrate(db);
+  db.exec(INDEX_SQL);
   _db = db;
   return db;
 }
@@ -51,6 +54,9 @@ function migrate(db: DatabaseSync): void {
   add("events", "location", "TEXT");
   add("events", "notes", "TEXT");
   add("transcripts", "summary", "TEXT");
+  add("assessments", "group_id", "TEXT");
+  add("assessments", "is_bonus", "INTEGER NOT NULL DEFAULT 0");
+  add("assessments", "min_percent", "REAL");
 }
 
 /** Simple key/value settings helpers. */

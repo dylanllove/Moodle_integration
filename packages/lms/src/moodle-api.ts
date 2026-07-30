@@ -11,8 +11,15 @@ export function moodleApiConfigured(): boolean {
   return Boolean(BASE() && TOKEN());
 }
 
-/** Call a Moodle Web Services function (POST, form-encoded, array-aware). */
-async function ws<T = any>(fn: string, params: Record<string, string | number> = {}): Promise<T> {
+/**
+ * Call a Moodle Web Services function (POST, form-encoded, array-aware).
+ * Exported so sibling modules (materials, grades) share one transport, token
+ * handling and error shape rather than each rolling their own fetch.
+ */
+export async function moodleWs<T = any>(
+  fn: string,
+  params: Record<string, string | number> = {},
+): Promise<T> {
   const body = new URLSearchParams({
     wstoken: TOKEN(),
     wsfunction: fn,
@@ -26,6 +33,9 @@ async function ws<T = any>(fn: string, params: Record<string, string | number> =
   }
   return json as T;
 }
+
+/** Local shorthand — this file calls Web Services on nearly every line. */
+const ws = moodleWs;
 
 export interface MoodleSyncCounts {
   courses: number;
@@ -292,7 +302,7 @@ function classifyLecture(m: MoodleModule, externalUrl?: string): LectureRec | nu
 }
 
 /** Append the WS token so Moodle pluginfile URLs are downloadable. */
-function withToken(fileurl: string | null | undefined): string | null {
+export function withToken(fileurl: string | null | undefined): string | null {
   if (!fileurl) return null;
   const sep = fileurl.includes("?") ? "&" : "?";
   return `${fileurl}${sep}token=${TOKEN()}`;

@@ -89,11 +89,9 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
 
     // A timetable can also come from a .ics dropped in the repo root, with no
     // URL set — so report the imported class count, not just the setting.
-    const classes = (
-      getDb()
-        .prepare("SELECT COUNT(*) AS n FROM events WHERE source = 'timetable'")
-        .get() as { n: number }
-    ).n;
+    const db = getDb();
+    const count = (sql: string): number => (db.prepare(sql).get() as { n: number }).n;
+    const classes = count("SELECT COUNT(*) AS n FROM events WHERE source = 'timetable'");
 
     return {
       openai: Boolean(process.env.OPENAI_API_KEY),
@@ -101,6 +99,22 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
       timetable: { url: getSetting("timetable_url") ?? "", classes },
       echo360: echoConnected(),
       deps: { node: process.version, ffmpeg: await hasFfmpeg() },
+      // Everything the guided setup shows as a later step, so each card can
+      // report real state instead of "probably not done yet".
+      materials: count("SELECT COUNT(*) AS n FROM materials WHERE path IS NOT NULL"),
+      grades: {
+        items: count("SELECT COUNT(*) AS n FROM assessments"),
+        weighted: count("SELECT COUNT(*) AS n FROM assessments WHERE weight IS NOT NULL"),
+        targets: count("SELECT COUNT(*) AS n FROM settings WHERE key LIKE 'grade_target:%' AND value <> ''"),
+      },
+      commitments: count("SELECT COUNT(*) AS n FROM commitments"),
+      decks: count("SELECT COUNT(*) AS n FROM decks"),
+      sync: {
+        google: Boolean(getSetting("gcal_refresh_token")),
+        notion: Boolean(process.env.NOTION_TOKEN && getSetting("notion_database_id")),
+        apple: getSetting("ics_subscribed") === "true",
+      },
+      digest: getSetting("digest_enabled") === "true",
     };
   });
 

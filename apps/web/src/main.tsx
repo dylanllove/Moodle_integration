@@ -11,6 +11,10 @@ import { Notes } from "./pages/Notes.js";
 import { Assistant } from "./pages/Assistant.js";
 import { Settings } from "./pages/Settings.js";
 import { Setup } from "./pages/Setup.js";
+import { Workload } from "./pages/Workload.js";
+import { Materials } from "./pages/Materials.js";
+import { Grades } from "./pages/Grades.js";
+import { Flashcards } from "./pages/Flashcards.js";
 
 const router = createBrowserRouter([
   {
@@ -19,9 +23,13 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: "calendar", element: <Calendar /> },
+      { path: "workload", element: <Workload /> },
       { path: "courses", element: <Courses /> },
+      { path: "materials", element: <Materials /> },
       { path: "lectures", element: <Lectures /> },
       { path: "notes", element: <Notes /> },
+      { path: "flashcards", element: <Flashcards /> },
+      { path: "grades", element: <Grades /> },
       { path: "assistant", element: <Assistant /> },
       { path: "settings", element: <Settings /> },
       { path: "setup", element: <Setup /> },

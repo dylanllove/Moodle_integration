@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import JSZip from "jszip";
 
 /** Extract readable text from a lecture-slide file (PDF or PPTX). */
@@ -10,6 +11,36 @@ export async function extractSlideText(url: string, mimetype = ""): Promise<stri
   if (/pdf/i.test(kind)) return extractPdf(buf);
   if (/presentation|powerpoint|pptx?/i.test(kind)) return extractPptx(buf);
   return "";
+}
+
+/**
+ * Same extraction, for a file already on disk — used by the materials library so
+ * a downloaded deck is fetched once and read from local bytes thereafter.
+ */
+export async function extractFileText(path: string, mimetype = ""): Promise<string> {
+  const kind = mimetype || guessFromUrl(path);
+  if (/pdf/i.test(kind)) return extractPdf(readFileSync(path));
+  if (/presentation|powerpoint|pptx?/i.test(kind)) return extractPptx(readFileSync(path));
+  if (/word|docx/i.test(kind) || /\.docx$/i.test(path)) return extractDocx(readFileSync(path));
+  if (/text|markdown|csv/i.test(kind) || /\.(txt|md|csv|tsv)$/i.test(path)) {
+    return readFileSync(path, "utf8").slice(0, 400_000);
+  }
+  return "";
+}
+
+/** DOCX is a zip whose document.xml holds the text runs — same trick as PPTX. */
+async function extractDocx(buf: Buffer): Promise<string> {
+  const zip = await JSZip.loadAsync(buf);
+  const doc = zip.file("word/document.xml");
+  if (!doc) return "";
+  const xml = await doc.async("string");
+  return xml
+    .replace(/<\/w:p>/g, "\n")
+    .replace(/<[^>]+>/g, "")
+    .split("\n")
+    .map((l) => decode(l).trim())
+    .filter(Boolean)
+    .join("\n");
 }
 
 function guessFromUrl(url: string): string {

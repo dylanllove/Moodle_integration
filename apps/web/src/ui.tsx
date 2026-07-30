@@ -5,6 +5,7 @@ import type {
   InputHTMLAttributes,
   TextareaHTMLAttributes,
   SelectHTMLAttributes,
+  WheelEvent,
 } from "react";
 
 export function Card({
@@ -87,7 +88,7 @@ export function Button({ variant = "outline", size = "md", className = "", ...pr
 /**
  * Small, pale-tinted pills. green/amber/red stay semantic — they carry due-date
  * and connection meaning, so they're deliberately outside the accent family.
- * `accent` is for highlighting, not status.
+ * `accent` is the sand highlight: worth noticing, not a status and not clickable.
  */
 export function Badge({
   children,
@@ -101,7 +102,7 @@ export function Badge({
     red: "bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-100",
     amber: "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-100",
     green: "bg-[#edf3ec] text-[#3f6b4a] ring-1 ring-inset ring-[#3f6b4a]/15",
-    accent: "bg-accent-tint text-accent-deep ring-1 ring-inset ring-accent/50",
+    accent: "bg-second-tint text-second-deep ring-1 ring-inset ring-second/50",
   }[tone];
   return (
     <span
@@ -206,7 +207,20 @@ export function Input({
   density,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & Density) {
-  return <input className={`${field(density)} ${className}`} {...props} />;
+  /**
+   * A focused `type="number"` input changes its value on scroll, so scrolling
+   * the page silently rewrites whatever number you last clicked into — marks,
+   * weightings, hours. Blurring on wheel makes the page scroll instead, which is
+   * what the gesture meant.
+   */
+  const onWheel =
+    props.type === "number"
+      ? (e: WheelEvent<HTMLInputElement>) => {
+          e.currentTarget.blur();
+          props.onWheel?.(e);
+        }
+      : props.onWheel;
+  return <input className={`${field(density)} ${className}`} {...props} onWheel={onWheel} />;
 }
 
 export function Textarea({

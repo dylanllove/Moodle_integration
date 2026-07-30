@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, type SetupStatus } from "../api.js";
 import {
   Card,
@@ -14,6 +14,13 @@ import {
   Loading,
 } from "../ui.js";
 
+/**
+ * Guided setup, in three passes.
+ *
+ * Two things are genuinely required (Moodle + an OpenAI key); everything else
+ * makes the app better but works fine unset. Grouping them that way stops a
+ * fourteen-step wall from reading as fourteen obligations.
+ */
 export function Setup() {
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,6 +49,7 @@ export function Setup() {
   const keyDone = status.openai;
   const timetableDone = Boolean(status.timetable.url) || status.timetable.classes > 0;
   const ready = moodleDone && keyDone;
+  const syncDone = status.sync.google || status.sync.notion || status.sync.apple;
 
   return (
     <div className="max-w-3xl">
@@ -49,19 +57,22 @@ export function Setup() {
         size="hero"
         title={
           <>
-            Let's get you <span className="swash">connected</span>
+            Let's get you <span className="swash">set up</span>
           </>
         }
         subtitle={
           <>
-            Four steps, mostly copy-and-paste. Everything stays on this machine — your credentials go
-            straight to your university and OpenAI, never anywhere else.
+            Two steps are essential; the rest you can do now or come back to. Everything stays on this
+            machine — your credentials go straight to your university, OpenAI, Google or Notion, never
+            anywhere else.
           </>
         }
       />
 
       <div className="space-y-4">
         <Prerequisites deps={status.deps} />
+
+        <Phase title="Connect" note="Nothing works without these two." />
 
         <Step n={1} title="Connect your Moodle" done={moodleDone} required>
           {moodleDone ? (
@@ -79,12 +90,17 @@ export function Setup() {
         <Step n={2} title="Add an OpenAI key" done={keyDone} required>
           {keyDone ? (
             <p className="text-sm text-ink-muted">
-              Key saved. Transcripts, study notes, cheat sheets and chat are all live.
+              Key saved. Transcripts, study notes, cheat sheets, flashcards and chat are all live.
             </p>
           ) : (
             <OpenAiKey onDone={refresh} />
           )}
         </Step>
+
+        <Phase
+          title="Fill in your semester"
+          note="Each of these feeds the calendar, the workload heatmap and the weekly digest."
+        />
 
         <Step n={3} title="Import your timetable" done={timetableDone}>
           {timetableDone && !status.timetable.url && (
@@ -99,6 +115,28 @@ export function Setup() {
         <Step n={4} title="Lecture recordings" done={status.echo360}>
           <Lectures connected={status.echo360} ffmpeg={status.deps.ffmpeg} />
         </Step>
+
+        <Step n={5} title="Download your course files" done={status.materials > 0}>
+          <Materials count={status.materials} onDone={refresh} />
+        </Step>
+
+        <Step n={6} title="Weightings, so grades can be calculated" done={status.grades.weighted > 0}>
+          <Grades grades={status.grades} onDone={refresh} />
+        </Step>
+
+        <Step n={7} title="Your life outside class" done={status.commitments > 0}>
+          <Life count={status.commitments} />
+        </Step>
+
+        <Phase title="Keep it flowing" note="Set these once and they run on their own." />
+
+        <Step n={8} title="Send deadlines to your calendar" done={syncDone}>
+          <Sync sync={status.sync} />
+        </Step>
+
+        <Step n={9} title="Weekly digest email" done={status.digest}>
+          <Digest enabled={status.digest} />
+        </Step>
       </div>
 
       <Finish ready={ready} />
@@ -107,6 +145,15 @@ export function Setup() {
 }
 
 /* -------------------------------------------------------------------------- */
+
+function Phase({ title, note }: { title: string; note: string }) {
+  return (
+    <div className="pt-5">
+      <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">{title}</h2>
+      <p className="mt-1 text-[13px] text-ink-muted">{note}</p>
+    </div>
+  );
+}
 
 function Step({
   n,
@@ -427,7 +474,7 @@ function OpenAiKey({ onDone }: { onDone: () => void }) {
   return (
     <div>
       <p className="mb-4 text-[13px] leading-relaxed text-ink-muted">
-        Powers transcription, study notes, cheat sheets and chat. Create one at{" "}
+        Powers transcription, study notes, cheat sheets, flashcards and chat. Create one at{" "}
         <a
           href="https://platform.openai.com/api-keys"
           target="_blank"
@@ -483,7 +530,8 @@ function Timetable({ initialUrl, onDone }: { initialUrl: string; onDone: () => v
     <div>
       <p className="mb-4 text-[13px] leading-relaxed text-ink-muted">
         Your Moodle knows your deadlines but not when your classes are. Your university's timetable
-        site publishes a subscribe link that fills in today's schedule, rooms and lecture times.
+        site publishes a subscribe link that fills in today's schedule, rooms, the week grid, and the
+        contact hours in your workload heatmap.
       </p>
       <Field label="Timetable iCal URL" hint="Starts with https:// or webcal://">
         <Input
@@ -508,7 +556,7 @@ function Timetable({ initialUrl, onDone }: { initialUrl: string; onDone: () => v
       {classes !== null && (
         <Notice className="mt-4">
           {classes > 0
-            ? `Imported ${classes} class sessions. They're on your calendar and today's schedule now.`
+            ? `Imported ${classes} class sessions. They're on your calendar, today's schedule and the heatmap now.`
             : "That feed parsed but had no classes in the next 16 weeks — it may be last semester's link."}
         </Notice>
       )}
@@ -528,8 +576,8 @@ function Lectures({ connected, ffmpeg }: { connected: boolean; ffmpeg: boolean }
     <div>
       <p className="mb-4 text-[13px] leading-relaxed text-ink-muted">
         {connected
-          ? "Echo360 is connected — new recordings download and transcribe themselves each time the app starts."
-          : "If your lectures are recorded in Echo360, connecting it once means every new recording downloads and transcribes itself on launch. You can skip this and do it later."}
+          ? "Echo360 is connected — new recordings download and transcribe themselves each launch, then get study notes and a flashcard deck."
+          : "If your lectures are recorded in Echo360, connecting it once means every new recording downloads, transcribes, and turns into notes and flashcards on its own. You can skip this and do it later."}
       </p>
       {!ffmpeg && !connected && (
         <Notice tone="warn" className="mb-4">
@@ -543,6 +591,171 @@ function Lectures({ connected, ffmpeg }: { connected: boolean; ffmpeg: boolean }
   );
 }
 
+function Materials({ count, onDone }: { count: number; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api.materialsSync();
+      setMsg(
+        r.downloaded > 0
+          ? `Downloaded ${r.downloaded} files into ${r.root}, sorted into week folders.`
+          : r.found > 0
+            ? `Found ${r.found} files, all already downloaded.`
+            : "No downloadable files found in your active courses yet.",
+      );
+      onDone();
+    } catch (e) {
+      setMsg(`Couldn't download: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <p className="mb-4 text-[13px] leading-relaxed text-ink-muted">
+        {count > 0
+          ? `${count} files downloaded and filed by course and week. New ones arrive automatically each launch.`
+          : "Pulls every slide deck, reading and handout out of Moodle and files them by course and week — a real folder you can browse, plus the text extracted so flashcards and chat can use it."}
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant={count > 0 ? "outline" : "primary"} onClick={run} disabled={busy}>
+          {busy ? "Downloading…" : count > 0 ? "Check for new files" : "Download my course files"}
+        </Button>
+        {count > 0 && (
+          <Link to="/materials" className="text-[13px] font-medium text-accent-deep hover:underline">
+            Browse them →
+          </Link>
+        )}
+      </div>
+      {msg && <Notice className="mt-4">{msg}</Notice>}
+    </div>
+  );
+}
+
+function Grades({ grades, onDone }: { grades: SetupStatus["grades"]; onDone: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api.gradesSync();
+      setMsg(
+        r.weighted > 0
+          ? `Found ${r.items} graded items, ${r.weighted} with weightings. The calculator's live.`
+          : `Found ${r.items} items but no weightings — your gradebook doesn't publish them. Type them in on the Grades page from your course outline; it's a two-minute job you do once.`,
+      );
+      onDone();
+    } catch (e) {
+      setMsg(`Couldn't read the gradebook: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div>
+      <p className="mb-4 text-[13px] leading-relaxed text-ink-muted">
+        {grades.weighted > 0
+          ? `${grades.weighted} of ${grades.items} assessments have a weighting, so “what do I need on the final to get an A?” has a real answer.`
+          : "Pulls your marks and weightings from the Moodle gradebook. With weightings in place the app can tell you exactly what you need on each remaining assessment to hit a given grade — and warn you when a target slips out of reach."}
+      </p>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button variant={grades.weighted > 0 ? "outline" : "primary"} onClick={run} disabled={busy}>
+          {busy ? "Reading gradebook…" : "Pull my grades"}
+        </Button>
+        <Link to="/grades" className="text-[13px] font-medium text-accent-deep hover:underline">
+          Open Grades →
+        </Link>
+      </div>
+      {grades.weighted > 0 && grades.targets === 0 && (
+        <Notice className="mt-4">
+          Last thing: set the grade you're aiming for in each course, and the app will tell you what
+          it takes — and speak up in the weekly email if it's slipping.
+        </Notice>
+      )}
+      {msg && <Notice className="mt-4">{msg}</Notice>}
+    </div>
+  );
+}
+
+function Life({ count }: { count: number }) {
+  return (
+    <div>
+      <p className="mb-4 text-[13px] leading-relaxed text-ink-muted">
+        {count > 0
+          ? `${count} commitment${count === 1 ? "" : "s"} recorded. They show on the week grid and count towards your workload.`
+          : "A workload chart that ignores your job is fiction. Add the weekly pattern — shifts, training, family — and the heatmap tells you which weeks are actually going to hurt, not just which ones have deadlines."}
+      </p>
+      <Link to="/calendar">
+        <Button variant={count > 0 ? "outline" : "primary"}>
+          {count > 0 ? "Manage in the week view" : "Add my commitments"}
+        </Button>
+      </Link>
+    </div>
+  );
+}
+
+function Sync({ sync }: { sync: SetupStatus["sync"] }) {
+  const connected = [
+    sync.google && "Google Calendar",
+    sync.apple && "Apple Calendar",
+    sync.notion && "Notion",
+  ].filter(Boolean) as string[];
+
+  return (
+    <div>
+      <p className="mb-4 text-[13px] leading-relaxed text-ink-muted">
+        {connected.length
+          ? `Syncing to ${connected.join(" and ")}. Deadlines update in place after every sync, and cancelled ones are removed.`
+          : "Every deadline, exam and opening date, pushed where you already look. Google Calendar and Notion connect properly; Apple Calendar subscribes to a feed that refreshes hourly even when this app is closed."}
+      </p>
+      <ul className="mb-4 space-y-1.5 text-[13px] text-ink-muted">
+        <li>
+          <strong className="font-semibold text-ink">Google Calendar</strong> — writes to its own “Uni
+          Study” calendar so you can hide it in one click.
+        </li>
+        <li>
+          <strong className="font-semibold text-ink">Apple Calendar</strong> — one subscription link,
+          with alarms at your reminder lead time.
+        </li>
+        <li>
+          <strong className="font-semibold text-ink">Notion</strong> — builds a deadlines database
+          with course, type, weighting and status.
+        </li>
+      </ul>
+      <Link to="/settings">
+        <Button variant={connected.length ? "outline" : "primary"}>
+          {connected.length ? "Manage sync" : "Choose where deadlines go"}
+        </Button>
+      </Link>
+    </div>
+  );
+}
+
+function Digest({ enabled }: { enabled: boolean }) {
+  return (
+    <div>
+      <p className="mb-4 text-[13px] leading-relaxed text-ink-muted">
+        {enabled
+          ? "On. You'll get the week's rundown before it starts."
+          : "One email on Sunday night: what's due, how heavy the week looks compared with the last one, what's new since you last checked, cards waiting, and any grade target that's slipping. Sent through your own mail account — nothing passes through a third party."}
+      </p>
+      <Link to="/settings">
+        <Button variant={enabled ? "outline" : "primary"}>
+          {enabled ? "Change the schedule" : "Set up the weekly email"}
+        </Button>
+      </Link>
+    </div>
+  );
+}
+
 function Finish({ ready }: { ready: boolean }) {
   const nav = useNavigate();
   return (
@@ -550,7 +763,8 @@ function Finish({ ready }: { ready: boolean }) {
       {ready ? (
         <>
           <p className="mb-4 text-sm text-ink-muted">
-            That's the essentials done. You can change any of it later in Settings.
+            The essentials are done — everything else can be picked up whenever, from Settings or the
+            page it belongs to.
           </p>
           <Button variant="primary" onClick={() => nav("/")}>
             Go to my dashboard

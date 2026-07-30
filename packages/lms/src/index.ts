@@ -8,9 +8,21 @@ export {
   getCourseForumPosts,
   getCourseSlideFiles,
   courseNumericId,
+  moodleWs,
+  withToken,
   type ForumPost,
   type SlideFile,
 } from "./moodle-api.js";
+export {
+  syncMaterials,
+  materialsRoot,
+  weekFromText,
+  type MaterialsResult,
+  type MaterialKind,
+  type TextExtractor,
+} from "./materials.js";
+export { syncGrades, type GradesResult } from "./grades.js";
+export { syncPersonal, type PersonalResult } from "./personal.js";
 export { openContext, profileDir } from "./session.js";
 export type { ScrapeCounts } from "./moodle.js";
 export {

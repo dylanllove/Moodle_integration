@@ -9,7 +9,7 @@ config({ path: resolve(here, "../../../.env") });
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import { getDb } from "@uni/db";
+import { getDb, getSetting } from "@uni/db";
 import { registerCoreRoutes } from "./routes/core.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerSetupRoutes } from "./routes/setup.js";
@@ -23,6 +23,13 @@ import { registerExportRoutes } from "./routes/export.js";
 import { registerCheatsheetRoutes } from "./routes/cheatsheet.js";
 import { registerEcho360Routes } from "./routes/echo360.js";
 import { registerAskRoutes } from "./routes/ask.js";
+import { registerMaterialsRoutes } from "./routes/materials.js";
+import { registerGradesRoutes } from "./routes/grades.js";
+import { registerWorkloadRoutes } from "./routes/workload.js";
+import { registerFlashcardRoutes } from "./routes/flashcards.js";
+import { registerSyncRoutes } from "./routes/sync.js";
+import { registerDigestRoutes } from "./routes/digest.js";
+import { startScheduler } from "./scheduler.js";
 
 // Echo360 lesson ids are long (they embed timestamps), so allow long route params.
 const app = Fastify({ logger: true, maxParamLength: 1000 });
@@ -59,6 +66,12 @@ await registerExportRoutes(app);
 await registerCheatsheetRoutes(app);
 await registerEcho360Routes(app);
 await registerAskRoutes(app);
+await registerMaterialsRoutes(app);
+await registerGradesRoutes(app);
+await registerWorkloadRoutes(app);
+await registerFlashcardRoutes(app);
+await registerSyncRoutes(app);
+await registerDigestRoutes(app);
 
 const port = Number(process.env.PORT ?? 8787);
 app
@@ -68,6 +81,8 @@ app
     // Sync-on-launch: refresh Moodle data in the background so the app is
     // up to date the moment it opens. Non-blocking; errors are logged only.
     void autoSyncOnLaunch(app);
+    // Weekly digest — ticks quietly, catches up if the laptop was shut.
+    startScheduler(app);
   })
   .catch((err) => {
     app.log.error(err);
@@ -76,7 +91,14 @@ app
 
 async function autoSyncOnLaunch(app: import("fastify").FastifyInstance): Promise<void> {
   try {
-    const { moodleApiConfigured, sync } = await import("@uni/lms");
+    const { moodleApiConfigured, sync, syncPersonal } = await import("@uni/lms");
+    // Personal commitments are local, so re-expand them even with no LMS: the
+    // week view and heatmap shouldn't run dry just because Moodle isn't set up.
+    try {
+      syncPersonal();
+    } catch (e) {
+      app.log.warn(`Commitment rebuild skipped: ${String(e)}`);
+    }
     if (!moodleApiConfigured()) return;
     app.log.info("Auto-sync starting…");
     const r = await sync();
@@ -87,9 +109,35 @@ async function autoSyncOnLaunch(app: import("fastify").FastifyInstance): Promise
     } catch {
       /* non-fatal */
     }
-    // Push to Google Calendar if connected.
-    const { pushToGoogleCalendar, googleConnected } = await import("./google.js");
-    if (googleConnected()) await pushToGoogleCalendar().catch((e) => app.log.warn(String(e)));
+
+    // Gradebook weights + marks, so the grade calculator is current.
+    try {
+      const { syncGrades } = await import("@uni/lms");
+      const g = await syncGrades();
+      app.log.info({ grades: g }, "Gradebook synced");
+    } catch (e) {
+      app.log.warn(`Gradebook sync skipped: ${String(e)}`);
+    }
+
+    // Course files — slides and readings, filed by week.
+    if (getSetting("auto_materials") !== "false") {
+      try {
+        const { syncMaterials } = await import("@uni/lms");
+        const { extractFileText } = await import("./extract.js");
+        const m = await syncMaterials({ extractText: extractFileText });
+        app.log.info({ materials: m }, "Course files synced");
+      } catch (e) {
+        app.log.warn(`Course file sync skipped: ${String(e)}`);
+      }
+    }
+
+    // Push deadlines outward to whatever the student connected.
+    if (getSetting("auto_push_on_sync") !== "false") {
+      const { pushToGoogleCalendar, googleConnected } = await import("./google.js");
+      if (googleConnected()) await pushToGoogleCalendar().catch((e) => app.log.warn(String(e)));
+      const { pushToNotion, notionConnected } = await import("./notion.js");
+      if (notionConnected()) await pushToNotion().catch((e) => app.log.warn(String(e)));
+    }
 
     // Auto-pull Echo360 lectures if a session exists (downloads + transcribes
     // any new recordings so they're in the brain the moment they appear).

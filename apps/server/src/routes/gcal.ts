@@ -12,6 +12,10 @@ export async function registerGcalRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/gcal/status", async () => ({
     configured: googleConfigured(),
     connected: googleConnected(),
+    calendarId: getSetting("gcal_calendar_id"),
+    includeClasses: getSetting("gcal_include_classes") === "true",
+    includePersonal: getSetting("gcal_include_personal") === "true",
+    lastPush: getSetting("gcal_last_push"),
   }));
 
   app.get("/api/gcal/auth", async (_req, reply) => {
@@ -41,12 +45,36 @@ export async function registerGcalRoutes(app: FastifyInstance): Promise<void> {
     try {
       return { ok: true, ...(await pushToGoogleCalendar()) };
     } catch (e) {
-      return reply.code(500).send({ error: String(e) });
+      return reply.code(500).send({ error: String(e instanceof Error ? e.message : e) });
     }
   });
 
+  /**
+   * What lands in Google. Classes and personal commitments are off by default:
+   * most students already have their timetable there, and duplicating it is the
+   * fastest way to make someone unsubscribe.
+   */
+  app.put<{ Body: { includeClasses?: boolean; includePersonal?: boolean; useOwnCalendar?: boolean } }>(
+    "/api/gcal/options",
+    async (req) => {
+      const b = req.body ?? {};
+      if (b.includeClasses !== undefined)
+        setSetting("gcal_include_classes", b.includeClasses ? "true" : "false");
+      if (b.includePersonal !== undefined)
+        setSetting("gcal_include_personal", b.includePersonal ? "true" : "false");
+      // Switching target clears the pushed-id ledger: those ids live on the old
+      // calendar and deleting them there is no longer our business.
+      if (b.useOwnCalendar !== undefined) {
+        setSetting("gcal_calendar_id", b.useOwnCalendar ? "primary" : "");
+        setSetting("gcal_pushed_ids", "[]");
+      }
+      return { ok: true };
+    },
+  );
+
   app.post("/api/gcal/disconnect", async () => {
     setSetting("gcal_refresh_token", "");
+    setSetting("gcal_pushed_ids", "[]");
     return { ok: true };
   });
 

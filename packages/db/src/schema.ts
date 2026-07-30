@@ -111,10 +111,132 @@ CREATE TABLE IF NOT EXISTS course_text (
   body        TEXT NOT NULL,
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_course_text_course ON course_text(course_id);
 
+-- Course files (slides, readings, handouts) downloaded and filed by course/week.
+CREATE TABLE IF NOT EXISTS materials (
+  id           TEXT PRIMARY KEY,          -- moodle:file:<cmid>:<filename-hash>
+  course_id    TEXT REFERENCES courses(id) ON DELETE CASCADE,
+  week         INTEGER,                   -- inferred teaching week, null = unfiled
+  section      TEXT,                      -- LMS section name the file sat under
+  module       TEXT,                      -- LMS activity name
+  title        TEXT NOT NULL,             -- original filename
+  kind         TEXT NOT NULL DEFAULT 'other', -- slides | reading | sheet | data | other
+  mimetype     TEXT,
+  source_url   TEXT,                      -- LMS download url (token-bearing)
+  path         TEXT,                      -- local file path once downloaded
+  bytes        INTEGER,
+  modified_at  TEXT,                      -- LMS timemodified, drives re-download
+  text         TEXT,                      -- extracted text (slides/PDF) for study use
+  created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Graded items with weightings — the input to the "what do I need on the final?"
+-- calculator. Seeded from the Moodle gradebook, editable by hand.
+CREATE TABLE IF NOT EXISTS assessments (
+  id            TEXT PRIMARY KEY,
+  course_id     TEXT REFERENCES courses(id) ON DELETE CASCADE,
+  assignment_id TEXT REFERENCES assignments(id) ON DELETE SET NULL,
+  group_id      TEXT REFERENCES assessment_groups(id) ON DELETE SET NULL,
+  title         TEXT NOT NULL,
+  weight        REAL,                     -- % of the final grade; null in a group = equal share
+  score         REAL,                     -- marks earned, null = not marked yet
+  max_score     REAL,                     -- marks available (defaults to 100)
+  due_at        TEXT,
+  is_final      INTEGER NOT NULL DEFAULT 0, -- the item the calculator solves for
+  is_bonus      INTEGER NOT NULL DEFAULT 0, -- extra credit: adds points, not part of the 100
+  min_percent   REAL,                     -- hurdle you must clear on this item regardless
+  source        TEXT NOT NULL DEFAULT 'manual', -- gradebook | assignment | manual
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- A weighted bundle of assessments — "Labs 20% total, best 8 of 10".
+-- Courses weight this way constantly and it can't be expressed per-item without
+-- doing division by hand (and redoing it every time an item is added).
+CREATE TABLE IF NOT EXISTS assessment_groups (
+  id          TEXT PRIMARY KEY,
+  course_id   TEXT REFERENCES courses(id) ON DELETE CASCADE,
+  name        TEXT NOT NULL,
+  weight      REAL,                       -- % of the final grade for the whole bundle
+  drop_lowest INTEGER NOT NULL DEFAULT 0, -- how many worst results are discarded
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Life outside class: recurring commitments (shifts, sport, care) and one-offs.
+-- Materialised into the events table with source='personal' so the calendar,
+-- heatmap, .ics feed and digest all see them without special-casing.
+CREATE TABLE IF NOT EXISTS commitments (
+  id          TEXT PRIMARY KEY,
+  title       TEXT NOT NULL,
+  kind        TEXT NOT NULL DEFAULT 'other', -- work | sport | social | care | travel | other
+  weekdays    TEXT,                       -- JSON [0-6], Sun=0; null/[] = one-off
+  start_time  TEXT,                       -- "18:00" local, recurring only
+  hours       REAL NOT NULL DEFAULT 1,    -- duration, and its weight in the heatmap
+  start_at    TEXT,                       -- one-off: ISO start
+  from_date   TEXT,                       -- recurring: first date it applies (ISO date)
+  to_date     TEXT,                       -- recurring: last date it applies (ISO date)
+  notes       TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Flashcard decks + cards with a light spaced-repetition schedule.
+CREATE TABLE IF NOT EXISTS decks (
+  id          TEXT PRIMARY KEY,
+  course_id   TEXT REFERENCES courses(id) ON DELETE CASCADE,
+  lecture_id  TEXT REFERENCES lectures(id) ON DELETE SET NULL,
+  title       TEXT NOT NULL,
+  source      TEXT NOT NULL DEFAULT 'manual', -- lecture | material | note | cheatsheet | manual
+  source_ref  TEXT,                       -- id of the thing it was generated from
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS cards (
+  id          TEXT PRIMARY KEY,
+  deck_id     TEXT NOT NULL REFERENCES decks(id) ON DELETE CASCADE,
+  q           TEXT NOT NULL,
+  a           TEXT NOT NULL,
+  box         INTEGER NOT NULL DEFAULT 0, -- Leitner box: 0..5, drives the interval
+  due_at      TEXT,                       -- ISO, null = never reviewed (due now)
+  reviews     INTEGER NOT NULL DEFAULT 0,
+  lapses      INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- One row per weekly digest we've built, so the scheduler never double-sends.
+CREATE TABLE IF NOT EXISTS digests (
+  id          TEXT PRIMARY KEY,           -- ISO date of the week it covers
+  sent_at     TEXT,
+  channel     TEXT,                       -- email | local
+  subject     TEXT,
+  body        TEXT,                       -- markdown, so it's readable in-app
+  error       TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+`;
+
+/**
+ * Indexes, applied AFTER migrations.
+ *
+ * An index on a column that migrate() is about to add would fail on any database
+ * created before that column existed — and the whole schema exec would abort
+ * with it, bricking the app for existing users. Keeping them in a second pass
+ * makes indexing a migrated column safe.
+ */
+export const INDEX_SQL = /* sql */ `
+CREATE INDEX IF NOT EXISTS idx_course_text_course ON course_text(course_id);
 CREATE INDEX IF NOT EXISTS idx_assignments_course ON assignments(course_id);
 CREATE INDEX IF NOT EXISTS idx_lectures_course ON lectures(course_id);
 CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_at);
 CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_materials_course ON materials(course_id, week);
+CREATE INDEX IF NOT EXISTS idx_assessments_course ON assessments(course_id);
+CREATE INDEX IF NOT EXISTS idx_assessments_group ON assessments(group_id);
+CREATE INDEX IF NOT EXISTS idx_groups_course ON assessment_groups(course_id);
+CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck_id, due_at);
+CREATE INDEX IF NOT EXISTS idx_decks_course ON decks(course_id);
 `;

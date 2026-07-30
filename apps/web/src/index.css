@@ -1,14 +1,25 @@
 @import "tailwindcss";
 
 /* ============================================================================
-   Editorial-calm token layer — apricot & terracotta.
-   One warm accent against white space, anchored by a heavy display serif.
+   Editorial-calm token layer — sky blue & warm sand.
    Retune the whole visual system from this block.
 
-   The accent has two halves and they are not interchangeable:
-     --color-accent       bright apricot. BACKGROUND ONLY (swash, CTA pills).
-                          At 1.9:1 on white it fails as text; ink on it is 10.4:1.
-     --color-accent-deep  terracotta. All accent TEXT, icons, focus rings (6.2:1).
+   TWO COLOURS, TWO JOBS. Keeping these apart is what stops the UI feeling
+   busy — if everything is accented, nothing is:
+     sky    → interactive & system. Anything you click, follow or have
+              selected: CTAs, links, active nav, focus rings, the swash.
+     sand   → editorial highlight. Things worth *noticing* but not clicking:
+              highlight pills ("next up", "cheat sheet") and the wordmark.
+
+   Each colour has a bright half and a deep half, and they are NOT
+   interchangeable — the bright halves fail as text and are background-only:
+     --color-accent       sky #7dd3fc. BG ONLY. ink on it 10.8:1.
+     --color-accent-deep  #075985. All accent TEXT/icons/rings — 7.6:1 on white.
+     --color-second       sand #f2c185. BG ONLY. ink on it 10.9:1.
+     --color-second-deep  bronze #8f5a16. White on it 5.8:1; on sand-tint 5.0:1.
+
+   The neutrals stay deliberately WARM against the cool accent — that contrast
+   is what reads cartographic rather than corporate-blue.
    ============================================================================ */
 @theme {
   /* --- Color ------------------------------------------------------------- */
@@ -17,9 +28,12 @@
   --color-ink: #17170f; /* near-black, faintly warm — headings & body */
   --color-ink-soft: #33332b; /* long-form body copy: transcripts, notes */
   --color-ink-muted: #6e6e66; /* sub-copy, captions, attributions (5.2:1 on white) */
-  --color-accent: #ffb570; /* apricot — background only, never text */
-  --color-accent-tint: #ffebdb; /* pale wash: selected states, next-up */
-  --color-accent-deep: #9a4a21; /* terracotta — accent *text* & icons (6.2:1) */
+  --color-accent: #7dd3fc; /* sky — background only, never text */
+  --color-accent-tint: #e0f2fe; /* pale wash: selected states, next-up */
+  --color-accent-deep: #075985; /* deep sky — accent *text* & icons (7.6:1) */
+  --color-second: #f2c185; /* sand — background only, never text */
+  --color-second-tint: #fbeed8; /* pale sand: highlight pills */
+  --color-second-deep: #8f5a16; /* bronze — the wordmark mark, sand-pill text */
   --color-pill: #1c1c18; /* near-black filled pill (active toggle) */
   --color-hair: #eae6e0; /* hairline border on cards — warm neutral */
   --color-chip: #f3f0ea; /* citation-chip / tag background */
