@@ -332,6 +332,44 @@ export interface SyncPhase {
   detail: string | null;
 }
 
+/* --- Today's plan ---------------------------------------------------------- */
+
+export type ActionKind = "deadline" | "exam-prep" | "review" | "study-lecture" | "setup-gap";
+
+export interface PlanAction {
+  key: string;
+  kind: ActionKind;
+  title: string;
+  why: string;
+  courseId: string | null;
+  courseCode: string | null;
+  minutes: number;
+  to: string;
+  priority: number;
+  done: boolean;
+}
+
+export interface CourseReadiness {
+  courseId: string;
+  courseCode: string | null;
+  daysToNext: number | null;
+  nextTitle: string | null;
+  seen: number;
+  strong: number;
+  cards: number;
+  weightsKnown: boolean;
+  verdict: "not started" | "behind" | "getting there" | "on top of it" | "nothing due";
+}
+
+export interface StudyPlan {
+  date: string;
+  actions: PlanAction[];
+  readiness: CourseReadiness[];
+  minutes: number;
+  committedHours: number;
+  headline: string;
+}
+
 /* --- Notion ---------------------------------------------------------------- */
 
 export type NotionLinkKind = "assessments" | "notes";
@@ -597,6 +635,11 @@ export const api = {
     req<{ https: string; webcal: string; kinds: string[]; counts: Record<string, number> }>(
       "/calendar/subscribe",
     ),
+
+  // --- Today's plan ---
+  plan: () => req<StudyPlan>("/plan"),
+  planDone: (key: string, done: boolean) =>
+    req<StudyPlan>("/plan/done", { method: "POST", body: JSON.stringify({ key, done }) }),
 
   // --- Notion (two-way, one database per course if you like) ---
   notionStatus: () => req<NotionStatus>("/notion/status"),

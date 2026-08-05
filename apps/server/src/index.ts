@@ -31,6 +31,7 @@ import { registerSyncRoutes } from "./routes/sync.js";
 import { registerDigestRoutes } from "./routes/digest.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerNotionRoutes } from "./routes/notion.js";
+import { registerPlanRoutes } from "./routes/plan.js";
 import { startScheduler } from "./scheduler.js";
 import { runFullSync } from "./sync-job.js";
 
@@ -77,6 +78,7 @@ await registerSyncRoutes(app);
 await registerDigestRoutes(app);
 await registerSearchRoutes(app);
 await registerNotionRoutes(app);
+await registerPlanRoutes(app);
 
 const port = Number(process.env.PORT ?? 8787);
 app

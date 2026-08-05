@@ -1,3 +1,5 @@
+import { getSetting, setSetting } from "@uni/db";
+
 // OpenAI-backed completion. Kept behind the same complete()/hasApiKey()
 // interface the routes already use, so switching providers touched only here.
 export const MODEL_FAST = process.env.AI_MODEL_FAST || "gpt-4o-mini";
@@ -26,10 +28,32 @@ export interface AiHealth {
   at: string | null;
 }
 
-let health: AiHealth = { ok: true, fault: null, message: null, at: null };
+let health: AiHealth | null = null;
+
+/**
+ * Remembered across restarts. An exhausted quota does not fix itself, and the
+ * server restarts often in development — starting up claiming everything is fine
+ * hid the banner until the next call happened to fail, which is the moment the
+ * student least needs to rediscover it.
+ */
+function load(): AiHealth {
+  if (health) return health;
+  try {
+    const raw = getSetting("ai_last_fault");
+    if (raw) {
+      const parsed = JSON.parse(raw) as AiHealth;
+      health = { ok: false, fault: parsed.fault, message: parsed.message, at: parsed.at };
+      return health;
+    }
+  } catch {
+    /* unreadable — treat as healthy and let the next call decide */
+  }
+  health = { ok: true, fault: null, message: null, at: null };
+  return health;
+}
 
 export function aiHealth(): AiHealth {
-  return health;
+  return load();
 }
 
 function classify(message: string): AiFault {
@@ -42,11 +66,27 @@ function classify(message: string): AiFault {
 }
 
 function noteFailure(message: string): void {
-  health = { ok: false, fault: classify(message), message: message.slice(0, 300), at: new Date().toISOString() };
+  health = {
+    ok: false,
+    fault: classify(message),
+    message: message.slice(0, 300),
+    at: new Date().toISOString(),
+  };
+  try {
+    setSetting("ai_last_fault", JSON.stringify(health));
+  } catch {
+    /* the in-memory copy is enough to show the banner this run */
+  }
 }
 
 function noteSuccess(): void {
-  if (!health.ok) health = { ok: true, fault: null, message: null, at: null };
+  if (load().ok) return;
+  health = { ok: true, fault: null, message: null, at: null };
+  try {
+    setSetting("ai_last_fault", "");
+  } catch {
+    /* nothing to undo */
+  }
 }
 
 export interface CompleteOpts {

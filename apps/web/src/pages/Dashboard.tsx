@@ -15,6 +15,7 @@ import {
   dueMeta,
 } from "../ui.js";
 import { courseColor } from "../colors.js";
+import { TodayPlan } from "../TodayPlan.js";
 
 /** How many deadlines the dashboard shows before deferring to the calendar. */
 const DEADLINE_LIMIT = 5;
@@ -24,7 +25,6 @@ const SESSION_SIZE = 60;
 export function Dashboard() {
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
-  const [reminderDays, setReminderDays] = useState(3);
   const [thisWeek, setThisWeek] = useState<WeekLoad | null>(null);
   const [crunch, setCrunch] = useState<WeekLoad | null>(null);
   const [cardsDue, setCardsDue] = useState(0);
@@ -38,12 +38,10 @@ export function Dashboard() {
     Promise.all([
       api.events(now.toISOString(), to.toISOString()),
       api.courses(),
-      api.reminderDays(),
     ])
-      .then(([e, c, r]) => {
+      .then(([e, c]) => {
         setEvents(e);
         setCourses(c);
-        setReminderDays(r.days);
       })
       .finally(() => setLoading(false));
 
@@ -87,12 +85,6 @@ export function Dashboard() {
   const deadlines = events
     .filter((e) => e.kind === "deadline" || e.kind === "exam")
     .sort((a, b) => a.start_at.localeCompare(b.start_at));
-  const soon = deadlines.filter(
-    (e) =>
-      new Date(e.start_at).getTime() - Date.now() <= reminderDays * 864e5 &&
-      new Date(e.start_at) >= new Date(Date.now() - 864e5),
-  );
-
   const g = greeting();
   const dateLine = new Date().toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
   const nextClass = todaySchedule.find((e) => new Date(e.start_at).getTime() >= Date.now());
@@ -112,7 +104,7 @@ export function Dashboard() {
           <>
             {dateLine}.
             <br />
-            {loading ? "Pulling your week together…" : summaryLine(todaySchedule.length, soon.length, reminderDays)}
+            {loading ? "Pulling your week together…" : dateOnlySummary(todaySchedule.length)}
           </>
         }
         actions={
@@ -127,6 +119,9 @@ export function Dashboard() {
 
       {/* First-run guidance when nothing's synced yet */}
       {!loading && courses.length === 0 && <GettingStarted />}
+
+      {/* What to do today, before the numbers that explain why. */}
+      {!loading && courses.length > 0 && <TodayPlan />}
 
       {/* The week at a glance — hours, what's due, what's waiting to be drilled. */}
       {!loading && courses.length > 0 && (
@@ -386,16 +381,15 @@ function greeting(): { lead: string; accent: string } {
   return { lead: "Good", accent };
 }
 
-/** Calm one-liner: what's actually on today, in plain terms. */
-function summaryLine(classes: number, dueSoon: number, days: number): string {
-  const a =
-    classes === 0 ? "No classes today" : `${classes} class${classes > 1 ? "es" : ""} today`;
-  const b =
-    dueSoon === 0
-      ? "nothing due just yet"
-      : `${dueSoon} thing${dueSoon > 1 ? "s" : ""} due inside ${days} day${days > 1 ? "s" : ""}`;
-  return `${a}, ${b}.`;
+/**
+ * Just the shape of the day. What's *pressing* is the plan's job, immediately
+ * below — saying it twice in two different phrasings reads as a bug.
+ */
+function dateOnlySummary(classes: number): string {
+  if (classes === 0) return "No classes today.";
+  return `${classes} class${classes > 1 ? "es" : ""} today.`;
 }
+
 
 /** Shown while there's nothing to show — points at the guided setup. */
 function GettingStarted() {

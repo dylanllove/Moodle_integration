@@ -226,6 +226,17 @@ CREATE TABLE IF NOT EXISTS notion_links (
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Actions ticked off on today's plan, so it stops suggesting them.
+-- Keyed by day as well as action: "drill MGMT244 cards" done on Tuesday should be
+-- offered again on Wednesday, whereas "read the outline" done once stays done
+-- because the underlying gap is closed.
+CREATE TABLE IF NOT EXISTS plan_done (
+  day     TEXT NOT NULL,               -- local YYYY-MM-DD
+  key     TEXT NOT NULL,               -- the action's stable key
+  done_at TEXT NOT NULL,
+  PRIMARY KEY (day, key)
+);
+
 -- One row per weekly digest we've built, so the scheduler never double-sends.
 CREATE TABLE IF NOT EXISTS digests (
   id          TEXT PRIMARY KEY,           -- ISO date of the week it covers
