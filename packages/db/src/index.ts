@@ -57,6 +57,9 @@ function migrate(db: DatabaseSync): void {
   add("assessments", "group_id", "TEXT");
   add("assessments", "is_bonus", "INTEGER NOT NULL DEFAULT 0");
   add("assessments", "min_percent", "REAL");
+  // When a card was first shown. Without it there's no way to introduce new cards
+  // at a sane rate, and a semester of auto-generated decks all falls due at once.
+  add("cards", "introduced_at", "TEXT");
 }
 
 /** Simple key/value settings helpers. */

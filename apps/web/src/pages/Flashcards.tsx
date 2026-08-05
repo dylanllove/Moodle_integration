@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { api, type Course, type Deck, type Lecture, type ReviewCard } from "../api.js";
+import { api, type Course, type CourseIntake, type Deck, type Lecture, type ReviewCard } from "../api.js";
 import { courseColor } from "../colors.js";
 import {
   Card,
@@ -47,9 +47,12 @@ export function Flashcards() {
   const [session, setSession] = useState<{ scope: string; label: string } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
+  const [intake, setIntake] = useState<CourseIntake[]>([]);
+
   const load = useCallback(async () => {
     const [d, c, l] = await Promise.all([api.decks(), api.courses(), api.lectures()]);
     setDecks(d.decks);
+    setIntake(d.intakeByCourse ?? []);
     setCourses(c);
     setLectures(l);
   }, []);
@@ -117,6 +120,8 @@ export function Flashcards() {
       />
 
       {msg && <Notice className="mb-5">{msg}</Notice>}
+
+      <Pacing intake={intake} courses={courses} total={cardTotal} />
 
       {loading ? (
         <Loading label="Shuffling…" />
@@ -244,6 +249,55 @@ function Generate({
         Course files make decks too — there's a <strong className="font-semibold">Flashcards</strong>{" "}
         button on each readable file under Course files.
       </p>
+    </Card>
+  );
+}
+
+/**
+ * Why today's number is what it is.
+ *
+ * A queue that dropped from 438 to 149 overnight looks like cards went missing
+ * unless the pacing says so out loud — and the case that matters most is the one
+ * where there isn't enough time left to see everything once, which is a thing to
+ * be told plainly rather than left to discover in the exam.
+ */
+function Pacing({
+  intake,
+  courses,
+  total,
+}: {
+  intake: CourseIntake[];
+  courses: Course[];
+  total: number;
+}) {
+  const relevant = intake.filter((i) => i.unseen > 0 || i.introducedToday > 0);
+  if (relevant.length === 0) return null;
+  const codeOf = (id: string | null) => courses.find((c) => c.id === id)?.code ?? "Other";
+  const behind = relevant.filter((i) => i.behind);
+
+  return (
+    <Card className={`mb-5 p-4 ${behind.length ? "bg-amber-50" : ""}`}>
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
+        today's pace
+      </div>
+      <div className="space-y-1">
+        {relevant.map((i) => (
+          <p key={i.courseId ?? "none"} className="text-[13px] leading-snug text-ink-muted">
+            <strong className="font-medium text-ink">{codeOf(i.courseId)}</strong> —{" "}
+            {i.introducedToday > 0 && `${i.introducedToday} new seen today, `}
+            {i.reason}
+            {i.unseen > 0 && ` · ${i.unseen} of ${total} still unseen`}
+          </p>
+        ))}
+      </div>
+      {behind.length > 0 && (
+        <p className="mt-2.5 text-[13px] leading-relaxed text-amber-900">
+          There isn't time to meet every card once before{" "}
+          {behind.length === 1 ? "that assessment" : "those assessments"} at a sustainable rate. Work
+          from the lecture notes for breadth and use the cards on what you know is weak, rather than
+          trying to clear the queue.
+        </p>
+      )}
     </Card>
   );
 }

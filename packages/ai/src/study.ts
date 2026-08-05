@@ -1,3 +1,4 @@
+import { getSetting } from "@uni/db";
 import { complete, MODEL_FAST, MODEL_DRAFT } from "./client.js";
 
 /** Cap very long transcripts so we stay within a sensible request size. */
@@ -13,6 +14,9 @@ export function summariseLecture(transcript: string, title?: string): Promise<st
       system:
         "You are a study assistant that turns lecture transcripts into clear, accurate notes. Never invent facts that aren't supported by the transcript.",
       maxTokens: 2048,
+      tier: "bulk",
+      task: "lecture-summary",
+      cache: true,
     },
   );
 }
@@ -21,7 +25,7 @@ export function summariseLecture(transcript: string, title?: string): Promise<st
 export function transcriptToNotes(transcript: string): Promise<string> {
   return complete(
     `Reorganise this lecture transcript into structured markdown notes with headings and sub-bullets, preserving the lecturer's meaning. Remove filler and repetition. Do not add facts.\n\nTRANSCRIPT:\n${clamp(transcript)}`,
-    { maxTokens: 3000 },
+    { maxTokens: 3000, tier: "bulk", task: "transcript-notes", cache: true },
   );
 }
 
@@ -29,7 +33,7 @@ export function transcriptToNotes(transcript: string): Promise<string> {
 export function explain(text: string, context?: string): Promise<string> {
   return complete(
     `Explain the following clearly and simply, as if to a student seeing it for the first time. Use an example if helpful.\n\n${context ? `CONTEXT:\n${clamp(context, 8000)}\n\n` : ""}PASSAGE:\n${clamp(text, 8000)}`,
-    { model: MODEL_FAST },
+    { tier: "bulk", task: "explain" },
   );
 }
 
@@ -56,8 +60,13 @@ ${corpus}`,
     {
       system:
         "You are an exam-prep assistant that distils course material into a precise, trustworthy cheat sheet. Never fabricate facts or hints that aren't supported by the material.",
+      // A cheat sheet is read before an exam and being wrong is expensive, so
+      // this is one of the two jobs still worth paying a frontier model for.
       model: MODEL_DRAFT,
       maxTokens: 3500,
+      tier: "quality",
+      task: "cheatsheet",
+      cache: true,
     },
   );
 }
@@ -72,6 +81,13 @@ export async function cleanTranscript(raw: string): Promise<string> {
   const text = (raw ?? "").trim();
   if (text.length < 200) return text;
 
+  // Off unless asked for. This rewrites the transcript in full, so you pay for
+  // every word twice — once going in and once coming back, and output is the
+  // dearer half. What it buys is a nicer read; search, the assistant, the notes
+  // and the flashcards are all perfectly happy with raw ASR text. It was quietly
+  // the largest text line on the bill for the smallest return.
+  if (getSetting("clean_transcripts") !== "true") return text;
+
   const chunks = splitWords(text, 4500);
   const cleaned: string[] = [];
   for (const chunk of chunks) {
@@ -80,9 +96,11 @@ export async function cleanTranscript(raw: string): Promise<string> {
         `Reformat this lecture transcript segment into clean, readable text. Fix punctuation and capitalisation, split into sensible paragraphs, and remove filler ("um", "uh", "you know"), false starts and stutters. Do NOT summarise, add, or remove real content — keep everything the speaker actually said. Output only the cleaned text.\n\nTRANSCRIPT:\n${chunk}`,
         {
           system: "You clean up speech-to-text transcripts. You never summarise or invent content.",
-          model: MODEL_FAST,
           maxTokens: 4096,
           temperature: 0.1,
+          tier: "bulk",
+          task: "clean-transcript",
+          cache: true,
         },
       ),
     );
@@ -124,8 +142,10 @@ Anything the lecturer stressed, repeated, or flagged as important or testable (e
 Base everything ONLY on the material below — do not invent. Be tight and skimmable.\n\nLECTURE CONTENT:\n${clamp(content, 90_000)}`,
     {
       system: "You produce accurate, concise lecture study notes. You never add facts not present in the material.",
-      model: MODEL_FAST,
       maxTokens: 1800,
+      tier: "bulk",
+      task: "flashcards",
+      cache: true,
     },
   );
 }
@@ -142,6 +162,10 @@ export async function flashcards(text: string): Promise<Flashcard[]> {
     {
       system: "You output strictly valid JSON and nothing else.",
       maxTokens: 2048,
+      json: true,
+      tier: "bulk",
+      task: "flashcards",
+      cache: true,
     },
   );
   return parseJsonArray(raw);
@@ -186,6 +210,9 @@ ${clamp(text, 60_000)}`,
       system:
         "You are an expert at writing flashcards for active recall. You output strictly valid JSON and nothing else, and you never invent facts absent from the material.",
       maxTokens: 4000,
+      tier: "bulk",
+      task: "deck-generate",
+      cache: true,
       temperature: 0.2,
     },
   );

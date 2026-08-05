@@ -66,9 +66,10 @@ export async function registerAskRoutes(app: FastifyInstance): Promise<void> {
     const { prompt, system, sources } = buildAsk(req.body);
     const answer = await complete(prompt, {
       system,
-      model: MODEL_FAST,
       maxTokens: 900,
       temperature: 0.3,
+      tier: "bulk",
+      task: "chat",
     });
     return { answer, sources };
   });
@@ -94,9 +95,10 @@ export async function registerAskRoutes(app: FastifyInstance): Promise<void> {
       send({ type: "sources", sources });
       for await (const delta of completeStream(prompt, {
         system,
-        model: MODEL_FAST,
         maxTokens: 900,
         temperature: 0.3,
+        tier: "bulk",
+        task: "chat",
       })) {
         send({ type: "delta", text: delta });
       }

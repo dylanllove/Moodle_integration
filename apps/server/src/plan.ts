@@ -1,5 +1,6 @@
 import { getDb } from "@uni/db";
 import { courseGrades } from "./grades.js";
+import { availability, intakeFor } from "./card-schedule.js";
 
 /**
  * What to do today.
@@ -188,34 +189,37 @@ export function buildPlan(dayIso?: string): StudyPlan {
 
   /* --- Cards waiting ------------------------------------------------------- */
 
-  const dueByCourse = db
-    .prepare(
-      `SELECT dk.course_id, COUNT(*) AS due
-         FROM cards ca JOIN decks dk ON dk.id = ca.deck_id
-        WHERE (ca.due_at IS NULL OR ca.due_at <= datetime('now'))
-        GROUP BY dk.course_id`,
-    )
-    .all() as { course_id: string | null; due: number }[];
-
-  for (const row of dueByCourse) {
-    if (!isActive(row.course_id) || row.due === 0) continue;
-    const soon = soonestDays(now, row.course_id);
-    const size = Math.min(SESSION_CARDS, row.due);
-    // Cards matter more the closer the course's next assessment is.
+  for (const course of courses) {
+    // Today's queue, not the whole library: suggesting "drill 139 cards" is how
+    // a plan gets ignored.
+    const today = availability({ course_id: course.id });
+    if (today.total === 0) continue;
+    const intake = intakeFor(course.id);
+    const soon = soonestDays(now, course.id);
+    const size = Math.min(SESSION_CARDS, today.total);
     const pressure = soon == null ? 12 : Math.max(12, 70 / (soon + 1));
     actions.push({
-      key: `review:${row.course_id}`,
+      key: `review:${course.id}`,
       kind: "review",
-      title: `Drill ${size} ${codeOf(row.course_id) ?? ""} cards`.trim(),
-      why:
-        `${row.due} waiting` +
-        (soon != null ? ` · next assessment in ${soon} day${soon === 1 ? "" : "s"}` : ""),
-      courseId: row.course_id,
-      courseCode: codeOf(row.course_id),
+      title: `Drill ${size} ${course.code ?? ""} cards`.trim(),
+      why: [
+        today.reviewDue > 0 ? `${today.reviewDue} to revisit` : null,
+        today.newAvailable > 0 ? `${today.newAvailable} new` : null,
+        intake.behind
+          ? `${intake.unseen} still unseen with ${soon}d to go — prioritise`
+          : soon != null
+            ? `next assessment in ${soon} day${soon === 1 ? "" : "s"}`
+            : null,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      courseId: course.id,
+      courseCode: course.code,
       minutes: Math.round(size * MINUTES_PER_CARD),
-      to: `/flashcards?course=${encodeURIComponent(row.course_id ?? "")}`,
-      priority: pressure,
-      done: doneKeys.has(`review:${row.course_id}`),
+      to: `/flashcards?course=${encodeURIComponent(course.id)}`,
+      // A course that can't cover its material in time should shout.
+      priority: pressure + (intake.behind ? 25 : 0),
+      done: doneKeys.has(`review:${course.id}`),
     });
   }
 

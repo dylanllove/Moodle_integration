@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "@uni/db";
 import { generateDeck, hasApiKey } from "@uni/ai";
+import { availability, intakeFor, markIntroduced } from "./card-schedule.js";
 
 /**
  * Flashcard decks and their review schedule.
@@ -23,6 +24,8 @@ export type DeckSummary = {
   due: number;
   /** Cards that have reached the last box — "known", loosely. */
   mastered: number;
+  /** Never shown yet. These arrive at the daily rate rather than all at once. */
+  unseen: number;
 }
 
 export function listDecks(courseId?: string): DeckSummary[] {
@@ -33,40 +36,129 @@ export function listDecks(courseId?: string): DeckSummary[] {
     .prepare(
       `SELECT d.id, d.course_id, d.lecture_id, d.title, d.source, d.created_at,
               COUNT(c.id) AS cards,
-              SUM(CASE WHEN c.due_at IS NULL OR c.due_at <= ? THEN 1 ELSE 0 END) AS due,
+              SUM(CASE WHEN c.introduced_at IS NOT NULL
+                        AND (c.due_at IS NULL OR c.due_at <= ?) THEN 1 ELSE 0 END) AS review_due,
+              SUM(CASE WHEN c.introduced_at IS NULL THEN 1 ELSE 0 END) AS unseen,
               SUM(CASE WHEN c.box >= ${MAX_BOX} THEN 1 ELSE 0 END) AS mastered
        FROM decks d LEFT JOIN cards c ON c.deck_id = d.id
        ${where}
        GROUP BY d.id ORDER BY d.created_at DESC`,
     )
-    .all(...(courseId ? [now, courseId] : [now])) as DeckSummary[];
-  return rows.map((r) => ({ ...r, due: r.due ?? 0, mastered: r.mastered ?? 0 }));
+    .all(...(courseId ? [now, courseId] : [now])) as unknown as (DeckSummary & {
+    review_due: number | null;
+  })[];
+
+  // The daily allowance for new cards belongs to the *course*, so it has to be
+  // shared out across that course's decks rather than granted to each of them.
+  // Handing every deck the full allowance was how "all 438 due" survived the
+  // introduction of a schedule at all.
+  const budgets = new Map<string, number>();
+  const budgetFor = (id: string | null): number => {
+    const key = id ?? "__none__";
+    if (!budgets.has(key)) budgets.set(key, intakeFor(id).remaining);
+    return budgets.get(key)!;
+  };
+
+  // Oldest deck first, so material is met in the order it was taught.
+  const order = [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const allocated = new Map<string, number>();
+  for (const deck of order) {
+    const key = deck.course_id ?? "__none__";
+    const left = budgetFor(deck.course_id);
+    const take = Math.min(left, deck.unseen ?? 0);
+    allocated.set(deck.id, take);
+    budgets.set(key, left - take);
+  }
+
+  return rows.map((r) => ({
+    id: r.id,
+    course_id: r.course_id,
+    lecture_id: r.lecture_id,
+    title: r.title,
+    source: r.source,
+    created_at: r.created_at,
+    cards: r.cards ?? 0,
+    // What you can actually do today, not the size of the backlog.
+    due: (r.review_due ?? 0) + (allocated.get(r.id) ?? 0),
+    mastered: r.mastered ?? 0,
+    unseen: r.unseen ?? 0,
+  }));
 }
 
-/** Cards due now, oldest-scheduled first, across a deck or a whole course. */
+/**
+ * The day's queue: everything due for review, then new cards up to the day's
+ * allowance.
+ *
+ * Reviews come first deliberately. Meeting a card once and never again is how you
+ * end up with a large library and nothing retained, so re-seeing what's already
+ * been started beats starting more of it.
+ */
 export function dueCards(opts: { deck_id?: string; course_id?: string; limit?: number } = {}) {
   const db = getDb();
+  const limit = Math.min(200, opts.limit ?? 40);
   const now = new Date().toISOString();
-  const clauses = ["(c.due_at IS NULL OR c.due_at <= ?)"];
-  const args: (string | number)[] = [now];
+
+  const scope: string[] = [];
+  const scopeArgs: string[] = [];
   if (opts.deck_id) {
-    clauses.push("c.deck_id = ?");
-    args.push(opts.deck_id);
+    scope.push("c.deck_id = ?");
+    scopeArgs.push(opts.deck_id);
   }
   if (opts.course_id) {
-    clauses.push("d.course_id = ?");
-    args.push(opts.course_id);
+    scope.push("d.course_id = ?");
+    scopeArgs.push(opts.course_id);
   }
-  args.push(Math.min(200, opts.limit ?? 40));
-  return db
-    .prepare(
-      `SELECT c.id, c.deck_id, c.q, c.a, c.box, c.due_at, c.reviews, c.lapses,
+  const where = scope.length ? `AND ${scope.join(" AND ")}` : "";
+
+  const SELECT = `SELECT c.id, c.deck_id, c.q, c.a, c.box, c.due_at, c.reviews, c.lapses,
               d.title AS deck_title, d.course_id
-       FROM cards c JOIN decks d ON d.id = c.deck_id
-       WHERE ${clauses.join(" AND ")}
-       ORDER BY c.due_at IS NULL DESC, c.due_at, c.box LIMIT ?`,
+       FROM cards c JOIN decks d ON d.id = c.deck_id`;
+
+  const reviews = db
+    .prepare(
+      `${SELECT}
+        WHERE c.introduced_at IS NOT NULL AND (c.due_at IS NULL OR c.due_at <= ?) ${where}
+        ORDER BY c.due_at IS NULL DESC, c.due_at, c.box
+        LIMIT ?`,
     )
-    .all(...args);
+    .all(now, ...scopeArgs, limit) as unknown as ReviewRow[];
+
+  if (reviews.length >= limit) return reviews;
+
+  // Fill the rest with new material, but never more than today's allowance.
+  const courseId =
+    opts.course_id ??
+    (opts.deck_id
+      ? ((db.prepare("SELECT course_id FROM decks WHERE id = ?").get(opts.deck_id) as
+          | { course_id: string | null }
+          | undefined)?.course_id ?? null)
+      : null);
+  const room = Math.min(limit - reviews.length, intakeFor(courseId).remaining);
+  if (room <= 0) return reviews;
+
+  const fresh = db
+    .prepare(
+      `${SELECT}
+        WHERE c.introduced_at IS NULL ${where}
+        ORDER BY d.created_at, c.rowid
+        LIMIT ?`,
+    )
+    .all(...scopeArgs, room) as unknown as ReviewRow[];
+
+  return [...reviews, ...fresh];
+}
+
+interface ReviewRow {
+  id: string;
+  deck_id: string;
+  q: string;
+  a: string;
+  box: number;
+  due_at: string | null;
+  reviews: number;
+  lapses: number;
+  deck_title: string;
+  course_id: string | null;
 }
 
 /** Record a review. `got` false drops the card back for another pass soon. */
@@ -84,6 +176,7 @@ export function reviewCard(id: string, got: boolean): { box: number; due_at: str
   const dueMs = got ? days * 864e5 || 6 * 3_600_000 : 10 * 60_000;
   const due = new Date(Date.now() + dueMs).toISOString();
 
+  markIntroduced(id);
   db.prepare(
     `UPDATE cards SET box = ?, due_at = ?, reviews = reviews + 1, lapses = lapses + ?
      WHERE id = ?`,

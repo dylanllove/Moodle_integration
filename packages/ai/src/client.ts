@@ -1,150 +1,90 @@
-import { getSetting, setSetting } from "@uni/db";
+import {
+  MODEL_DRAFT,
+  MODEL_FAST,
+  estimateCost,
+  hasApiKey,
+  localStatus,
+  noteFailure,
+  noteSuccess,
+  record,
+  route,
+  type CompleteOpts,
+} from "./gateway.js";
 
-// OpenAI-backed completion. Kept behind the same complete()/hasApiKey()
-// interface the routes already use, so switching providers touched only here.
-export const MODEL_FAST = process.env.AI_MODEL_FAST || "gpt-4o-mini";
-export const MODEL_DRAFT = process.env.AI_MODEL_DRAFT || "gpt-4o";
+// Every model call goes through the gateway, which decides whether it costs
+// anything. This file is only the shape the rest of the app already calls.
+export { MODEL_FAST, MODEL_DRAFT, hasApiKey };
+export type { CompleteOpts };
 
-export function hasApiKey(): boolean {
-  return Boolean(process.env.OPENAI_API_KEY);
-}
-
-/**
- * Why the AI features aren't working, when they aren't.
- *
- * Transcripts, study notes, cheat sheets, flashcards, the outline reader and the
- * chat all run through here, so when the account runs out of credits every one of
- * them stops at once — and each one fails in its own quiet corner: a sync step
- * logs a warning, a deck never appears, the assistant returns a sentence. The
- * student is left to conclude the app is broken. Recording the reason centrally
- * lets the UI say it once, plainly.
- */
-export type AiFault = "quota" | "auth" | "rate-limit" | "network" | "other";
-
-export interface AiHealth {
-  ok: boolean;
-  fault: AiFault | null;
-  message: string | null;
-  at: string | null;
-}
-
-let health: AiHealth | null = null;
-
-/**
- * Remembered across restarts. An exhausted quota does not fix itself, and the
- * server restarts often in development — starting up claiming everything is fine
- * hid the banner until the next call happened to fail, which is the moment the
- * student least needs to rediscover it.
- */
-function load(): AiHealth {
-  if (health) return health;
-  try {
-    const raw = getSetting("ai_last_fault");
-    if (raw) {
-      const parsed = JSON.parse(raw) as AiHealth;
-      health = { ok: false, fault: parsed.fault, message: parsed.message, at: parsed.at };
-      return health;
-    }
-  } catch {
-    /* unreadable — treat as healthy and let the next call decide */
-  }
-  health = { ok: true, fault: null, message: null, at: null };
-  return health;
-}
-
-export function aiHealth(): AiHealth {
-  return load();
-}
-
-function classify(message: string): AiFault {
-  const m = message.toLowerCase();
-  if (/no credits|insufficient_quota|exceeded your current quota|billing/.test(m)) return "quota";
-  if (/invalid[_ ]api[_ ]key|incorrect api key|unauthorized|401/.test(m)) return "auth";
-  if (/rate limit|429/.test(m)) return "rate-limit";
-  if (/fetch failed|econnreset|enotfound|timeout|socket hang up/.test(m)) return "network";
-  return "other";
-}
-
-function noteFailure(message: string): void {
-  health = {
-    ok: false,
-    fault: classify(message),
-    message: message.slice(0, 300),
-    at: new Date().toISOString(),
-  };
-  try {
-    setSetting("ai_last_fault", JSON.stringify(health));
-  } catch {
-    /* the in-memory copy is enough to show the banner this run */
-  }
-}
-
-function noteSuccess(): void {
-  if (load().ok) return;
-  health = { ok: true, fault: null, message: null, at: null };
-  try {
-    setSetting("ai_last_fault", "");
-  } catch {
-    /* nothing to undo */
-  }
-}
-
-export interface CompleteOpts {
-  system?: string;
-  model?: string;
-  maxTokens?: number;
-  temperature?: number;
-  /** Ask the model for a JSON object — used where the answer is data, not prose. */
-  json?: boolean;
-}
-
-/** Single-turn chat completion returning the assistant's text. */
+/** Single-turn completion. Returns just the text, as it always did. */
 export async function complete(prompt: string, opts: CompleteOpts = {}): Promise<string> {
-  if (!hasApiKey()) throw new Error("OPENAI_API_KEY is not set — add it to your .env file.");
+  return (await route(prompt, opts)).text;
+}
 
-  const messages: { role: string; content: string }[] = [];
-  if (opts.system) messages.push({ role: "system", content: opts.system });
-  messages.push({ role: "user", content: prompt });
-
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: opts.model ?? MODEL_FAST,
-      messages,
-      max_tokens: opts.maxTokens ?? 2048,
-      temperature: opts.temperature ?? 0.3,
-      ...(opts.json ? { response_format: { type: "json_object" } } : {}),
-    }),
-  });
-
-  const json = (await res.json()) as any;
-  if (json.error) {
-    noteFailure(json.error.message ?? "OpenAI request failed");
-    throw new Error(`OpenAI: ${json.error.message}`);
-  }
-  noteSuccess();
-  return (json.choices?.[0]?.message?.content ?? "").trim();
+/** The same, but say which provider answered — for anything that reports cost. */
+export async function completeWhere(
+  prompt: string,
+  opts: CompleteOpts = {},
+): Promise<{ text: string; provider: string; model: string; cached: boolean; usd: number }> {
+  return route(prompt, opts);
 }
 
 /**
- * The same call, yielding text as it arrives. Waiting in silence for a long
- * answer reads as "broken"; watching it write reads as "thinking" — so the
- * assistant streams even though the finished text is identical.
+ * Streaming, token by token.
+ *
+ * Streams from whichever provider is chosen — Ollama's newline-delimited JSON and
+ * OpenAI's server-sent events are different enough on the wire to be worth
+ * keeping apart, and identical enough afterwards that the caller can't tell.
  */
 export async function* completeStream(
   prompt: string,
   opts: CompleteOpts = {},
 ): AsyncGenerator<string> {
-  if (!hasApiKey()) throw new Error("OPENAI_API_KEY is not set — add it to your .env file.");
+  const local = await localStatus();
+  const preferLocal = local.ok && (opts.tier ?? "bulk") === "bulk" && !opts.model;
 
   const messages: { role: string; content: string }[] = [];
   if (opts.system) messages.push({ role: "system", content: opts.system });
   messages.push({ role: "user", content: prompt });
 
+  const model = preferLocal
+    ? process.env.AI_LOCAL_MODEL || "llama3.1:8b"
+    : (opts.model ?? MODEL_FAST);
+  const inChars = prompt.length + (opts.system?.length ?? 0);
+  let out = "";
+
+  try {
+    const stream = preferLocal
+      ? streamLocal(messages, model, opts)
+      : streamOpenAi(messages, model, opts);
+    for await (const piece of stream) {
+      out += piece;
+      yield piece;
+    }
+  } finally {
+    // Recorded even if the stream broke part-way: those tokens were still spent.
+    record({
+      provider: preferLocal ? "local" : "openai",
+      model,
+      task: opts.task ?? "chat",
+      inChars,
+      outChars: out.length,
+      usd: preferLocal ? 0 : estimateCost(model, inChars, out.length),
+    });
+  }
+}
+
+async function* streamOpenAi(
+  messages: { role: string; content: string }[],
+  model: string,
+  opts: CompleteOpts,
+): AsyncGenerator<string> {
+  if (!hasApiKey()) {
+    const msg =
+      "No OpenAI key and no local model — add a key in setup, or install Ollama to run one on this machine for free.";
+    noteFailure(msg);
+    throw new Error(msg);
+  }
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -152,7 +92,7 @@ export async function* completeStream(
       authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: opts.model ?? MODEL_FAST,
+      model,
       messages,
       max_tokens: opts.maxTokens ?? 2048,
       temperature: opts.temperature ?? 0.3,
@@ -174,7 +114,7 @@ export async function* completeStream(
     throw new Error(`OpenAI: ${message || res.statusText}`);
   }
 
-  noteSuccess();
+  noteSuccess("openai");
   const decoder = new TextDecoder();
   let buffer = "";
   for await (const bytes of res.body as unknown as AsyncIterable<Uint8Array>) {
@@ -193,6 +133,48 @@ export async function* completeStream(
         } catch {
           /* partial or non-JSON keepalive — skip */
         }
+      }
+    }
+  }
+}
+
+async function* streamLocal(
+  messages: { role: string; content: string }[],
+  model: string,
+  opts: CompleteOpts,
+): AsyncGenerator<string> {
+  const url = process.env.AI_LOCAL_URL || "http://127.0.0.1:11434";
+  const res = await fetch(`${url}/api/chat`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: true,
+      options: { temperature: opts.temperature ?? 0.3, num_predict: opts.maxTokens ?? 2048 },
+    }),
+  });
+  if (!res.ok || !res.body) {
+    const msg = `Local model (${model}): ${res.statusText}`;
+    noteFailure(msg);
+    throw new Error(msg);
+  }
+  noteSuccess("local");
+
+  // Ollama streams one JSON object per line rather than SSE frames.
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for await (const bytes of res.body as unknown as AsyncIterable<Uint8Array>) {
+    buffer += decoder.decode(bytes, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const piece = JSON.parse(line)?.message?.content;
+        if (piece) yield piece as string;
+      } catch {
+        /* partial line — it'll arrive with the next chunk */
       }
     }
   }

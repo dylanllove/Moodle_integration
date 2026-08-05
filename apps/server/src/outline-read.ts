@@ -141,7 +141,18 @@ export async function readOutline(courseId: string): Promise<OutlineRead | null>
       `- "workload": the official hours breakdown if the outline states one, else null.\n` +
       `- Do not include readings, lectures, or non-assessed activities as items.\n\n` +
       `OUTLINE:\n${file.text.slice(0, MAX_CHARS)}`,
-    { system: SYSTEM, model: MODEL_DRAFT, maxTokens: 2000, temperature: 0, json: true },
+    {
+      system: SYSTEM,
+      model: MODEL_DRAFT,
+      maxTokens: 2000,
+      temperature: 0,
+      json: true,
+      // Worth paying for: read once per course, and a misread weighting corrupts
+      // every grade prediction afterwards. Cached so a retry is free.
+      tier: "quality",
+      task: "read-outline",
+      cache: true,
+    },
   );
 
   return interpret(raw, { id: course.id, code: course.code }, { id: file.id, title: file.title });

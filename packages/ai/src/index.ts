@@ -1,13 +1,28 @@
 export {
   complete,
+  completeWhere,
   completeStream,
   hasApiKey,
-  aiHealth,
   MODEL_FAST,
   MODEL_DRAFT,
+  type CompleteOpts,
+} from "./client.js";
+export {
+  aiHealth,
+  localStatus,
+  spend,
+  budgetUsd,
+  setBudgetUsd,
+  cacheStats,
+  clearCache,
+  estimateCost,
+  record as recordAiUsage,
   type AiHealth,
   type AiFault,
-} from "./client.js";
+  type AiTier,
+  type Provider,
+  type Spend,
+} from "./gateway.js";
 export {
   summariseLecture,
   transcriptToNotes,

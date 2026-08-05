@@ -240,8 +240,22 @@ export interface Deck {
   source: string;
   created_at: string;
   cards: number;
+  /** Available today — reviews plus this course's share of the new-card intake. */
   due: number;
   mastered: number;
+  /** Never shown. These arrive at the daily rate rather than all at once. */
+  unseen: number;
+}
+
+export interface CourseIntake {
+  courseId: string | null;
+  allowance: number;
+  introducedToday: number;
+  remaining: number;
+  unseen: number;
+  daysToNext: number | null;
+  behind: boolean;
+  reason: string;
 }
 
 export interface ReviewCard {
@@ -330,6 +344,28 @@ export interface SyncPhase {
   label: string;
   status: "pending" | "running" | "done" | "skipped" | "error";
   detail: string | null;
+}
+
+/* --- AI cost --------------------------------------------------------------- */
+
+export interface AiStatus {
+  health: AiHealth;
+  spend: {
+    monthUsd: number;
+    todayUsd: number;
+    budgetUsd: number | null;
+    overBudget: boolean;
+    byTask: { task: string; provider: string; calls: number; usd: number }[];
+  };
+  cache: { entries: number; savedUsd: number };
+  provider: string;
+  transcribeProvider: string;
+  cleanTranscripts: boolean;
+  budgetUsd: number | null;
+  local: {
+    text: { ok: boolean; models: string[]; url: string };
+    audio: { ok: boolean; engine?: string; model?: string | null };
+  };
 }
 
 /* --- Today's plan ---------------------------------------------------------- */
@@ -636,6 +672,17 @@ export const api = {
       "/calendar/subscribe",
     ),
 
+  // --- AI cost & providers ---
+  aiStatus: () => req<AiStatus>("/ai/status"),
+  aiOptions: (body: {
+    provider?: string;
+    transcribeProvider?: string;
+    budgetUsd?: number | null;
+    cleanTranscripts?: boolean;
+  }) => req<{ ok: boolean }>("/ai/options", { method: "PUT", body: JSON.stringify(body) }),
+  aiProbeLocal: () => req<{ ok: boolean }>("/ai/probe-local", { method: "POST" }),
+  aiClearCache: () => req<{ ok: boolean; cleared: number }>("/ai/cache/clear", { method: "POST" }),
+
   // --- Today's plan ---
   plan: () => req<StudyPlan>("/plan"),
   planDone: (key: string, done: boolean) =>
@@ -781,7 +828,9 @@ export const api = {
 
   // --- Flashcards ---
   decks: (courseId?: string) =>
-    req<{ decks: Deck[] }>(`/decks${courseId ? `?course_id=${courseId}` : ""}`),
+    req<{ decks: Deck[]; intake: CourseIntake | null; intakeByCourse: CourseIntake[] }>(
+      `/decks${courseId ? `?course_id=${courseId}` : ""}`,
+    ),
   deck: (id: string) =>
     req<{ deck: Deck; cards: { id: string; q: string; a: string; box: number; due_at: string | null }[] }>(
       `/decks/${id}`,

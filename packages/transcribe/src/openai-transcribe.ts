@@ -2,7 +2,10 @@ import { readFileSync, statSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
 import type { TranscriptSegment } from "@uni/db";
+import { getSetting } from "@uni/db";
+import { recordAiUsage } from "@uni/ai";
 import { splitAudio, probeDuration } from "./ffmpeg.js";
+import { localTranscriber, transcribeLocally } from "./local-transcribe.js";
 
 const MODEL = () => process.env.AI_TRANSCRIBE_MODEL || "whisper-1";
 const MAX_BYTES = 24 * 1024 * 1024; // OpenAI limit is 25MB; leave headroom.
@@ -19,7 +22,34 @@ export interface TranscriptResult {
  * timestamps.
  */
 export async function transcribeFile(audioPath: string): Promise<TranscriptResult> {
-  if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set.");
+  // Prefer the machine. Lecture audio is the biggest line on the bill and the
+  // one job a laptop can do for free, so paying per minute is a fallback rather
+  // than the default.
+  if (getSetting("transcribe_provider") !== "openai") {
+    const local = await localTranscriber();
+    if (local) {
+      const started = Date.now();
+      const r = await transcribeLocally(audioPath, local);
+      recordAiUsage({
+        provider: "local-whisper",
+        model: local.model ? basename(local.model) : local.engine,
+        task: "transcribe",
+        inChars: 0,
+        outChars: r.text.length,
+        usd: 0,
+      });
+      void started;
+      if (r.text.trim().length > 0) return r;
+      // An empty local result is worse than none — fall through and pay rather
+      // than storing a blank transcript for an hour of audio.
+    }
+  }
+
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error(
+      "No way to transcribe: no local Whisper installed and no OPENAI_API_KEY. Install whisper.cpp (brew install whisper-cpp) to do it on this machine for free.",
+    );
+  }
 
   if (statSync(audioPath).size <= MAX_BYTES) {
     return transcribeOne(audioPath, 0);
@@ -53,6 +83,18 @@ async function transcribeOne(path: string, offsetSec: number): Promise<Transcrip
   });
   const json = (await res.json()) as any;
   if (json.error) throw new Error(`OpenAI transcription: ${json.error.message}`);
+
+  // $0.006/min is the published whisper-1 rate; logged so the audio half of the
+  // bill shows up next to the text half instead of being invisible.
+  const minutes = ((json.duration as number) ?? 0) / 60;
+  recordAiUsage({
+    provider: "openai-whisper",
+    model: MODEL(),
+    task: "transcribe",
+    inChars: 0,
+    outChars: String(json.text ?? "").length,
+    usd: minutes * 0.006,
+  });
 
   const segments: TranscriptSegment[] = (json.segments ?? []).map((s: any) => ({
     start: (s.start ?? 0) + offsetSec,

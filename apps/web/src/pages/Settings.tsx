@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type AutoSync, type Course, type DigestStatus, type EchoSection, type SyncStatus } from "../api.js";
 import { NotionSettings } from "../NotionSettings.js";
+import { AiSettings } from "../AiSettings.js";
 import {
   Card,
   PageHeader,
@@ -60,6 +61,7 @@ export function Settings() {
           </div>
         </Card>
 
+        <AiSettings />
         <SyncCard />
         <NotionSettings />
         <DigestCard />

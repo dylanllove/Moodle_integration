@@ -32,6 +32,7 @@ import { registerDigestRoutes } from "./routes/digest.js";
 import { registerSearchRoutes } from "./routes/search.js";
 import { registerNotionRoutes } from "./routes/notion.js";
 import { registerPlanRoutes } from "./routes/plan.js";
+import { registerAiCostRoutes } from "./routes/ai-cost.js";
 import { startScheduler } from "./scheduler.js";
 import { runFullSync } from "./sync-job.js";
 
@@ -79,6 +80,7 @@ await registerDigestRoutes(app);
 await registerSearchRoutes(app);
 await registerNotionRoutes(app);
 await registerPlanRoutes(app);
+await registerAiCostRoutes(app);
 
 const port = Number(process.env.PORT ?? 8787);
 app

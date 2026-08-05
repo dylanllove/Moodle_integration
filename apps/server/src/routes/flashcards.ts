@@ -11,6 +11,7 @@ import {
   toQuizlet,
   type DeckSource,
 } from "../decks.js";
+import { intakeFor } from "../card-schedule.js";
 
 const SOURCES = ["lecture", "material", "note", "course"] as const;
 
@@ -19,6 +20,13 @@ export async function registerFlashcardRoutes(app: FastifyInstance): Promise<voi
 
   app.get<{ Querystring: { course_id?: string } }>("/api/decks", async (req) => ({
     decks: listDecks(req.query.course_id),
+    // Why today's number is what it is — otherwise a queue that shrank from 438
+    // to 50 looks like cards went missing.
+    intake: req.query.course_id ? intakeFor(req.query.course_id) : null,
+    intakeByCourse: getDb()
+      .prepare("SELECT DISTINCT course_id FROM decks WHERE course_id IS NOT NULL")
+      .all()
+      .map((r) => intakeFor((r as { course_id: string }).course_id)),
   }));
 
   app.get<{ Params: { id: string } }>("/api/decks/:id", async (req, reply) => {

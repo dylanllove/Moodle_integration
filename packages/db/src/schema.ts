@@ -226,6 +226,29 @@ CREATE TABLE IF NOT EXISTS notion_links (
   updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Every model call, so "why is my bill like that" has an answer.
+CREATE TABLE IF NOT EXISTS ai_usage (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  at        TEXT NOT NULL,
+  provider  TEXT NOT NULL,              -- local | openai | *-whisper
+  model     TEXT NOT NULL,
+  task      TEXT NOT NULL,              -- notes | flashcards | cheatsheet | chat | transcribe | …
+  in_chars  INTEGER NOT NULL DEFAULT 0,
+  out_chars INTEGER NOT NULL DEFAULT 0,
+  usd       REAL NOT NULL DEFAULT 0,    -- estimated; 0 for anything run locally
+  cached    INTEGER NOT NULL DEFAULT 0  -- served from ai_cache, so it cost nothing
+);
+
+-- Answers already paid for. The pipeline re-runs every twenty minutes and retries
+-- after failures, so without this the same transcript is turned into the same
+-- notes several times over, billed each time.
+CREATE TABLE IF NOT EXISTS ai_cache (
+  key  TEXT PRIMARY KEY,                -- hash of provider+model+system+prompt+params
+  task TEXT NOT NULL,
+  text TEXT NOT NULL,
+  at   TEXT NOT NULL
+);
+
 -- Actions ticked off on today's plan, so it stops suggesting them.
 -- Keyed by day as well as action: "drill MGMT244 cards" done on Tuesday should be
 -- offered again on Wednesday, whereas "read the outline" done once stays done
@@ -270,6 +293,7 @@ CREATE INDEX IF NOT EXISTS idx_assessments_group ON assessments(group_id);
 CREATE INDEX IF NOT EXISTS idx_groups_course ON assessment_groups(course_id);
 CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck_id, due_at);
 CREATE INDEX IF NOT EXISTS idx_decks_course ON decks(course_id);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_at ON ai_usage(at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notion_links_target
   ON notion_links(kind, IFNULL(course_id, ''));
 `;
