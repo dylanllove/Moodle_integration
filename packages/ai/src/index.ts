@@ -1,4 +1,13 @@
-export { complete, completeStream, hasApiKey, MODEL_FAST, MODEL_DRAFT } from "./client.js";
+export {
+  complete,
+  completeStream,
+  hasApiKey,
+  aiHealth,
+  MODEL_FAST,
+  MODEL_DRAFT,
+  type AiHealth,
+  type AiFault,
+} from "./client.js";
 export {
   summariseLecture,
   transcriptToNotes,

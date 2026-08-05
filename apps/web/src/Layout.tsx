@@ -1,8 +1,9 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, type SyncProgress } from "./api.js";
+import { api, type AiHealth, type SyncProgress } from "./api.js";
 import { ChatWidget } from "./ChatWidget.js";
 import { CommandPalette } from "./CommandPalette.js";
+import { Button } from "./ui.js";
 
 function relTime(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -289,12 +290,67 @@ export function Layout() {
 
         <main className="min-h-screen flex-1">
           <div className="mx-auto max-w-[1200px] px-10 py-14">
+            {progress?.ai && !progress.ai.ok && <AiFaultBanner ai={progress.ai} />}
             <Outlet />
           </div>
         </main>
       </div>
       <ChatWidget />
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+    </div>
+  );
+}
+
+/**
+ * One plain statement of why the AI half of the app has stopped.
+ *
+ * Transcripts, study notes, cheat sheets, flashcards and the assistant all run on
+ * the same key, so they fail together — and separately they fail invisibly: a deck
+ * that never appears looks like a deck that wasn't wanted. Naming the cause once,
+ * at the top of whatever page you're on, is the difference between "out of
+ * credits" and "this app is broken".
+ */
+function AiFaultBanner({ ai }: { ai: AiHealth }) {
+  const REASON: Record<string, { title: string; what: string; action?: { label: string; href: string } }> = {
+    quota: {
+      title: "OpenAI has no credits left",
+      what:
+        "Transcripts, study notes, cheat sheets, flashcards and the assistant are all paused until the account is topped up. Everything else — Moodle sync, deadlines, your calendar, course files — carries on as normal.",
+      action: { label: "Add credits", href: "https://platform.openai.com/settings/organization/billing" },
+    },
+    auth: {
+      title: "OpenAI rejected the API key",
+      what: "Re-enter it in setup — the AI features are paused until it's valid.",
+      action: { label: "Get a key", href: "https://platform.openai.com/api-keys" },
+    },
+    "rate-limit": {
+      title: "OpenAI is rate-limiting us",
+      what: "This usually clears on its own within a minute or two. The next sync will pick up where it left off.",
+    },
+    network: {
+      title: "Couldn't reach OpenAI",
+      what: "Looks like a connection problem rather than anything wrong with your account.",
+    },
+    other: { title: "The AI features hit an error", what: ai.message ?? "" },
+  };
+  const r = REASON[ai.fault ?? "other"] ?? REASON.other!;
+
+  return (
+    <div className="mb-8 rounded-card border border-amber-200 bg-amber-50 px-5 py-4">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold text-amber-900">{r.title}</div>
+          <p className="mt-1 text-[13px] leading-relaxed text-amber-900/80">{r.what}</p>
+          {ai.fault !== "other" && ai.message && (
+            <p className="mt-1.5 font-mono text-[11px] text-amber-900/60">{ai.message}</p>
+          )}
+        </div>
+        {r.action && (
+          <a href={r.action.href} target="_blank" rel="noreferrer">
+            <Button size="sm">{r.action.label}</Button>
+          </a>
+        )}
+      </div>
     </div>
   );
 }

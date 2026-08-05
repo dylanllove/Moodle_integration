@@ -398,6 +398,13 @@ export interface AutoSync {
   nextAt: string | null;
 }
 
+export interface AiHealth {
+  ok: boolean;
+  fault: "quota" | "auth" | "rate-limit" | "network" | "other" | null;
+  message: string | null;
+  at: string | null;
+}
+
 export interface SyncProgress {
   running: boolean;
   startedAt: string | null;
@@ -405,6 +412,7 @@ export interface SyncProgress {
   phases: SyncPhase[];
   error: string | null;
   auto?: AutoSync;
+  ai?: AiHealth;
 }
 
 /**

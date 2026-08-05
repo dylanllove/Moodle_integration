@@ -7,11 +7,55 @@ export function hasApiKey(): boolean {
   return Boolean(process.env.OPENAI_API_KEY);
 }
 
+/**
+ * Why the AI features aren't working, when they aren't.
+ *
+ * Transcripts, study notes, cheat sheets, flashcards, the outline reader and the
+ * chat all run through here, so when the account runs out of credits every one of
+ * them stops at once — and each one fails in its own quiet corner: a sync step
+ * logs a warning, a deck never appears, the assistant returns a sentence. The
+ * student is left to conclude the app is broken. Recording the reason centrally
+ * lets the UI say it once, plainly.
+ */
+export type AiFault = "quota" | "auth" | "rate-limit" | "network" | "other";
+
+export interface AiHealth {
+  ok: boolean;
+  fault: AiFault | null;
+  message: string | null;
+  at: string | null;
+}
+
+let health: AiHealth = { ok: true, fault: null, message: null, at: null };
+
+export function aiHealth(): AiHealth {
+  return health;
+}
+
+function classify(message: string): AiFault {
+  const m = message.toLowerCase();
+  if (/no credits|insufficient_quota|exceeded your current quota|billing/.test(m)) return "quota";
+  if (/invalid[_ ]api[_ ]key|incorrect api key|unauthorized|401/.test(m)) return "auth";
+  if (/rate limit|429/.test(m)) return "rate-limit";
+  if (/fetch failed|econnreset|enotfound|timeout|socket hang up/.test(m)) return "network";
+  return "other";
+}
+
+function noteFailure(message: string): void {
+  health = { ok: false, fault: classify(message), message: message.slice(0, 300), at: new Date().toISOString() };
+}
+
+function noteSuccess(): void {
+  if (!health.ok) health = { ok: true, fault: null, message: null, at: null };
+}
+
 export interface CompleteOpts {
   system?: string;
   model?: string;
   maxTokens?: number;
   temperature?: number;
+  /** Ask the model for a JSON object — used where the answer is data, not prose. */
+  json?: boolean;
 }
 
 /** Single-turn chat completion returning the assistant's text. */
@@ -33,11 +77,16 @@ export async function complete(prompt: string, opts: CompleteOpts = {}): Promise
       messages,
       max_tokens: opts.maxTokens ?? 2048,
       temperature: opts.temperature ?? 0.3,
+      ...(opts.json ? { response_format: { type: "json_object" } } : {}),
     }),
   });
 
   const json = (await res.json()) as any;
-  if (json.error) throw new Error(`OpenAI: ${json.error.message}`);
+  if (json.error) {
+    noteFailure(json.error.message ?? "OpenAI request failed");
+    throw new Error(`OpenAI: ${json.error.message}`);
+  }
+  noteSuccess();
   return (json.choices?.[0]?.message?.content ?? "").trim();
 }
 
@@ -81,9 +130,11 @@ export async function* completeStream(
     } catch {
       /* not JSON — use the raw text */
     }
+    noteFailure(message || res.statusText);
     throw new Error(`OpenAI: ${message || res.statusText}`);
   }
 
+  noteSuccess();
   const decoder = new TextDecoder();
   let buffer = "";
   for await (const bytes of res.body as unknown as AsyncIterable<Uint8Array>) {

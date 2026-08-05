@@ -10,6 +10,7 @@ import {
   type GradeBand,
 } from "../grades.js";
 import { parseOutline } from "../outline.js";
+import { readOutline } from "../outline-read.js";
 
 interface AssessmentBody {
   course_id?: string;
@@ -227,6 +228,56 @@ export async function registerGradesRoutes(app: FastifyInstance): Promise<void> 
   });
 
   /**
+   * Read the schedule out of the course outline PDF the file sync already
+   * downloaded, rather than asking the student to find and paste it. Returns a
+   * proposal — a wrong weighting quietly corrupts every prediction afterwards, so
+   * it is never applied without being seen.
+   */
+  app.post<{ Body: { course_id?: string } }>("/api/grades/read-outline", async (req, reply) => {
+    const courseId = req.body?.course_id;
+    if (!courseId) return reply.code(400).send({ error: "course_id is required." });
+    try {
+      const read = await readOutline(courseId);
+      if (!read) {
+        return reply.code(404).send({
+          error:
+            "No course outline found among this course's downloaded files. Sync course files, or paste the schedule below.",
+        });
+      }
+      return { ok: true, ...read };
+    } catch (e) {
+      return reply.code(400).send({ error: String(e instanceof Error ? e.message : e) });
+    }
+  });
+
+  /** Every active course that still has no weightings — the first-run case. */
+  app.post("/api/grades/read-outline/all", async () => {
+    const courses = db
+      .prepare(
+        `SELECT c.id, c.code FROM courses c
+          WHERE c.active = 1
+            AND NOT EXISTS (
+              SELECT 1 FROM assessments a WHERE a.course_id = c.id AND a.weight IS NOT NULL
+            )
+          ORDER BY c.code`,
+      )
+      .all() as { id: string; code: string | null }[];
+
+    const reads = [];
+    const failed: { code: string | null; error: string }[] = [];
+    for (const c of courses) {
+      try {
+        const read = await readOutline(c.id);
+        if (read) reads.push(read);
+        else failed.push({ code: c.code, error: "no outline found among the downloaded files" });
+      } catch (e) {
+        failed.push({ code: c.code, error: String(e instanceof Error ? e.message : e) });
+      }
+    }
+    return { ok: true, reads, failed };
+  });
+
+  /**
    * Save a parsed schedule. `replace` clears existing weights first — the usual
    * case, since this is how a course gets set up — but marks already entered on
    * matching titles are carried across so nobody loses their results.
@@ -240,6 +291,7 @@ export async function registerGradesRoutes(app: FastifyInstance): Promise<void> 
         isFinal?: boolean;
         isBonus?: boolean;
         minPercent?: number | null;
+        dueAt?: string | null;
         group?: { count: number; dropLowest: number } | null;
       }[];
       replace?: boolean;
@@ -290,6 +342,9 @@ export async function registerGradesRoutes(app: FastifyInstance): Promise<void> 
       insertAssessment(courseId, {
         title,
         weight: item.weight,
+        // A stated exam or test date is the thing everything else is planned
+        // around, so it comes through with the weighting rather than separately.
+        due_at: item.dueAt ?? null,
         is_final: item.isFinal === true,
         is_bonus: item.isBonus === true,
         min_percent: item.minPercent ?? null,

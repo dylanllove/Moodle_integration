@@ -6,6 +6,7 @@ import { listLinks, notionConnected } from "../notion-links.js";
 import { syncNotion } from "../notion-sync.js";
 import { runFullSync, syncRunning, syncState } from "../sync-job.js";
 import { autoSyncSettings } from "../scheduler.js";
+import { aiHealth } from "@uni/ai";
 
 /**
  * Where deadlines go: Google Calendar, Apple Calendar (via the .ics feed), and
@@ -24,7 +25,11 @@ export async function registerSyncRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true, alreadyRunning: false, state: syncState() };
   });
 
-  app.get("/api/sync/progress", async () => ({ ...syncState(), auto: autoSyncSettings() }));
+  app.get("/api/sync/progress", async () => ({
+    ...syncState(),
+    auto: autoSyncSettings(),
+    ai: aiHealth(),
+  }));
 
   app.get("/api/sync/status", async (req) => {
     const host = req.headers.host ?? `127.0.0.1:${process.env.PORT ?? 8787}`;
