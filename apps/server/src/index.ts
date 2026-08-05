@@ -9,7 +9,7 @@ config({ path: resolve(here, "../../../.env") });
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
-import { getDb, getSetting } from "@uni/db";
+import { getDb } from "@uni/db";
 import { registerCoreRoutes } from "./routes/core.js";
 import { registerSettingsRoutes } from "./routes/settings.js";
 import { registerSetupRoutes } from "./routes/setup.js";
@@ -29,7 +29,10 @@ import { registerWorkloadRoutes } from "./routes/workload.js";
 import { registerFlashcardRoutes } from "./routes/flashcards.js";
 import { registerSyncRoutes } from "./routes/sync.js";
 import { registerDigestRoutes } from "./routes/digest.js";
+import { registerSearchRoutes } from "./routes/search.js";
+import { registerNotionRoutes } from "./routes/notion.js";
 import { startScheduler } from "./scheduler.js";
+import { runFullSync } from "./sync-job.js";
 
 // Echo360 lesson ids are long (they embed timestamps), so allow long route params.
 const app = Fastify({ logger: true, maxParamLength: 1000 });
@@ -72,14 +75,16 @@ await registerWorkloadRoutes(app);
 await registerFlashcardRoutes(app);
 await registerSyncRoutes(app);
 await registerDigestRoutes(app);
+await registerSearchRoutes(app);
+await registerNotionRoutes(app);
 
 const port = Number(process.env.PORT ?? 8787);
 app
   .listen({ port, host: "127.0.0.1" })
   .then(() => {
     app.log.info(`Uni Study server on http://127.0.0.1:${port}`);
-    // Sync-on-launch: refresh Moodle data in the background so the app is
-    // up to date the moment it opens. Non-blocking; errors are logged only.
+    // Sync-on-launch: refresh everything in the background so the app is up to
+    // date the moment it opens. Non-blocking; the UI watches /api/sync/progress.
     void autoSyncOnLaunch(app);
     // Weekly digest — ticks quietly, catches up if the laptop was shut.
     startScheduler(app);
@@ -90,68 +95,7 @@ app
   });
 
 async function autoSyncOnLaunch(app: import("fastify").FastifyInstance): Promise<void> {
-  try {
-    const { moodleApiConfigured, sync, syncPersonal } = await import("@uni/lms");
-    // Personal commitments are local, so re-expand them even with no LMS: the
-    // week view and heatmap shouldn't run dry just because Moodle isn't set up.
-    try {
-      syncPersonal();
-    } catch (e) {
-      app.log.warn(`Commitment rebuild skipped: ${String(e)}`);
-    }
-    if (!moodleApiConfigured()) return;
-    app.log.info("Auto-sync starting…");
-    const r = await sync();
-    app.log.info({ counts: (r as { counts?: unknown }).counts }, "Auto-sync done");
-    try {
-      const { indexAll } = await import("@uni/ai");
-      indexAll();
-    } catch {
-      /* non-fatal */
-    }
-
-    // Gradebook weights + marks, so the grade calculator is current.
-    try {
-      const { syncGrades } = await import("@uni/lms");
-      const g = await syncGrades();
-      app.log.info({ grades: g }, "Gradebook synced");
-    } catch (e) {
-      app.log.warn(`Gradebook sync skipped: ${String(e)}`);
-    }
-
-    // Course files — slides and readings, filed by week.
-    if (getSetting("auto_materials") !== "false") {
-      try {
-        const { syncMaterials } = await import("@uni/lms");
-        const { extractFileText } = await import("./extract.js");
-        const m = await syncMaterials({ extractText: extractFileText });
-        app.log.info({ materials: m }, "Course files synced");
-      } catch (e) {
-        app.log.warn(`Course file sync skipped: ${String(e)}`);
-      }
-    }
-
-    // Push deadlines outward to whatever the student connected.
-    if (getSetting("auto_push_on_sync") !== "false") {
-      const { pushToGoogleCalendar, googleConnected } = await import("./google.js");
-      if (googleConnected()) await pushToGoogleCalendar().catch((e) => app.log.warn(String(e)));
-      const { pushToNotion, notionConnected } = await import("./notion.js");
-      if (notionConnected()) await pushToNotion().catch((e) => app.log.warn(String(e)));
-    }
-
-    // Auto-pull Echo360 lectures if a session exists (downloads + transcribes
-    // any new recordings so they're in the brain the moment they appear).
-    try {
-      const { echoConnected } = await import("@uni/lms");
-      if (echoConnected()) {
-        app.log.info("Echo360 auto-sync starting…");
-        const res = await app.inject({ method: "POST", url: "/api/echo360/sync" });
-        app.log.info(`Echo360 auto-sync: ${res.body}`);
-      }
-    } catch (e) {
-      app.log.warn(`Echo360 auto-sync skipped: ${String(e)}`);
-    }
-  } catch (e) {
-    app.log.warn(`Auto-sync skipped: ${String(e)}`);
-  }
+  app.log.info("Auto-sync starting…");
+  const state = await runFullSync(app);
+  app.log.info({ phases: state.phases }, "Auto-sync done");
 }

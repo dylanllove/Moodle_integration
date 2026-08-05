@@ -23,3 +23,7 @@ models/
 
 # Temp/scratch scripts
 _*.mjs
+.shot*.mjs
+
+# Machine-specific Claude Code permission grants
+.claude/settings.local.json

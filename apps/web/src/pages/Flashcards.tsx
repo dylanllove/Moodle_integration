@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, type Course, type Deck, type Lecture, type ReviewCard } from "../api.js";
 import { courseColor } from "../colors.js";
 import {
@@ -15,7 +16,30 @@ import {
   Loading,
 } from "../ui.js";
 
+/**
+ * Cards served in one sitting.
+ *
+ * Every card in a freshly generated deck is due immediately, so a week of
+ * auto-generated decks can put two hundred cards "due" at once. Serving all of
+ * them is not a study session, it's a wall — and a wall is what makes people stop
+ * opening the app. A sitting is bounded; the backlog is stated, not hidden.
+ */
+const SESSION_SIZE = 60;
+
+/** "60 of 202 due" when there's a backlog, plain "12 cards due" when there isn't. */
+function sessionLabel(dueTotal: number): string {
+  return dueTotal > SESSION_SIZE
+    ? `${SESSION_SIZE} of ${dueTotal} due`
+    : `${dueTotal} card${dueTotal === 1 ? "" : "s"} due`;
+}
+
 export function Flashcards() {
+  // ?deck= drops you straight into that deck's review — search links here.
+  const [params, setParams] = useSearchParams();
+  const wantedDeck = params.get("deck");
+  // ?review=all starts straight into everything due, mixed across decks — the
+  // dashboard's "cards due" tile is a promise to drill them, not to show a list.
+  const reviewAll = params.get("review") === "all";
   const [decks, setDecks] = useState<Deck[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [lectures, setLectures] = useState<Lecture[]>([]);
@@ -34,7 +58,27 @@ export function Flashcards() {
     load().finally(() => setLoading(false));
   }, [load]);
 
+  // Wait for the decks so the session can be labelled with the deck's name.
+  // Consumed once per id, or finishing a review would drop you straight back
+  // into it while the URL is still catching up.
+  const started = useRef<string | null>(null);
+  useEffect(() => {
+    if (!wantedDeck || started.current === wantedDeck) return;
+    const deck = decks.find((d) => d.id === wantedDeck);
+    if (!deck) return;
+    started.current = wantedDeck;
+    setSession({ scope: `deck:${deck.id}`, label: deck.title });
+  }, [wantedDeck, decks]);
+
   const dueTotal = decks.reduce((s, d) => s + d.due, 0);
+
+  // Wait for the count so the session can be labelled, and only auto-start when
+  // there's actually something due — landing in an empty reviewer reads as broken.
+  useEffect(() => {
+    if (!reviewAll || loading || started.current === "all" || dueTotal === 0) return;
+    started.current = "all";
+    setSession({ scope: "", label: sessionLabel(dueTotal) });
+  }, [reviewAll, loading, dueTotal]);
   const cardTotal = decks.reduce((s, d) => s + d.cards, 0);
 
   if (session) {
@@ -44,6 +88,11 @@ export function Flashcards() {
         label={session.label}
         onDone={async () => {
           setSession(null);
+          if (params.has("deck") || params.has("review")) {
+            params.delete("deck");
+            params.delete("review");
+            setParams(params, { replace: true });
+          }
           await load();
         }}
       />
@@ -59,9 +108,9 @@ export function Flashcards() {
           dueTotal > 0 && (
             <Button
               variant="primary"
-              onClick={() => setSession({ scope: "", label: `${dueTotal} cards due` })}
+              onClick={() => setSession({ scope: "", label: sessionLabel(dueTotal) })}
             >
-              Review {dueTotal} due
+              {dueTotal > SESSION_SIZE ? `Review ${SESSION_SIZE} now` : `Review ${dueTotal} due`}
             </Button>
           )
         }
@@ -321,14 +370,26 @@ function Review({
   const [shown, setShown] = useState(false);
   const [loading, setLoading] = useState(true);
   const [tally, setTally] = useState({ got: 0, missed: 0 });
+  const [round, setRound] = useState(0);
 
   useEffect(() => {
     const deckId = scope.startsWith("deck:") ? scope.slice(5) : undefined;
+    setLoading(true);
     api
-      .reviewQueue({ deck_id: deckId, limit: 60 })
-      .then((r) => setQueue(r.cards))
+      .reviewQueue({ deck_id: deckId, limit: SESSION_SIZE })
+      .then((r) => {
+        setQueue(r.cards);
+        setIndex(0);
+        setShown(false);
+      })
       .finally(() => setLoading(false));
-  }, [scope]);
+  }, [scope, round]);
+
+  /** Pull the next batch without leaving the reviewer. */
+  const next = useCallback(() => {
+    setTally({ got: 0, missed: 0 });
+    setRound((r) => r + 1);
+  }, []);
 
   const card = queue[index];
 
@@ -364,6 +425,9 @@ function Review({
 
   if (!card) {
     const done = tally.got + tally.missed;
+    // A full session means there's very likely more behind it. Saying so — and
+    // offering the next one — beats sending you back to a list to work it out.
+    const maybeMore = done >= SESSION_SIZE;
     return (
       <div className="mx-auto max-w-lg text-center">
         <PageHeader
@@ -371,13 +435,22 @@ function Review({
           title={done ? <>Session <span className="swash">done</span></> : "Nothing due"}
           subtitle={
             done
-              ? `${tally.got} right, ${tally.missed} to come back to. The ones you missed return in a few minutes; the rest are scheduled further out.`
+              ? `${tally.got} right, ${tally.missed} to come back to. The ones you missed return in a few minutes; the rest are scheduled further out.${
+                  maybeMore ? " There are more waiting whenever you are." : ""
+                }`
               : "Everything in this deck is scheduled for later. That's the system working."
           }
         />
-        <Button variant="primary" onClick={onDone}>
-          Back to decks
-        </Button>
+        <div className="flex flex-wrap justify-center gap-2">
+          {maybeMore && (
+            <Button variant="primary" onClick={next}>
+              Another {SESSION_SIZE}
+            </Button>
+          )}
+          <Button variant={maybeMore ? "outline" : "primary"} onClick={onDone}>
+            Back to decks
+          </Button>
+        </div>
       </div>
     );
   }

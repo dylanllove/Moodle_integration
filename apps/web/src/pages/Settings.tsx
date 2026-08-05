@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, type Course, type DigestStatus, type EchoSection, type SyncStatus } from "../api.js";
+import { api, type AutoSync, type Course, type DigestStatus, type EchoSection, type SyncStatus } from "../api.js";
+import { NotionSettings } from "../NotionSettings.js";
 import {
   Card,
   PageHeader,
@@ -60,6 +61,7 @@ export function Settings() {
         </Card>
 
         <SyncCard />
+        <NotionSettings />
         <DigestCard />
         <Echo360Card />
         <TimetableCard />
@@ -85,7 +87,8 @@ export function Settings() {
         <Card className="p-6">
           <SectionTitle className="mb-1.5">What happens on its own</SectionTitle>
           <p className="mb-4 text-[13px] leading-relaxed text-ink-muted">
-            These run each time the app starts. Turn them off if you'd rather do them by hand.
+            These run at launch and on every automatic sync. Turn them off if you'd rather do them
+            by hand.
           </p>
           <div className="divide-y divide-hair">
             <Toggle
@@ -169,13 +172,12 @@ function SyncCard() {
       </SectionTitle>
       <p className="mb-5 text-[13px] leading-relaxed text-ink-muted">
         {status.deadlines} deadline{status.deadlines === 1 ? "" : "s"} across your active courses.
-        Connect one or all three — they stay in step after every sync.
+        Connect either — they stay in step after every sync. Notion has its own section below.
       </p>
 
       <div className="space-y-4">
         <GoogleRow status={status} onChange={load} />
         <AppleRow status={status} onChange={load} />
-        <NotionRow status={status} onChange={load} />
       </div>
 
       {anyConnected && (
@@ -193,8 +195,69 @@ function SyncCard() {
         </label>
       )}
 
+      <AutoSyncRow auto={status.auto} onChange={load} />
+
       {msg && <p className="mt-4 text-sm text-ink-muted">{msg}</p>}
     </Card>
+  );
+}
+
+/**
+ * How often the app refreshes itself. Worth a control rather than a constant:
+ * on a metered connection or a tired battery, twenty minutes of browser launches
+ * is a cost, and the right number depends on the week you're having.
+ */
+const INTERVALS = [10, 20, 30, 60, 120] as const;
+
+function AutoSyncRow({ auto, onChange }: { auto: AutoSync; onChange: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const save = async (body: { autoSyncEnabled?: boolean; autoSyncMinutes?: number }) => {
+    setBusy(true);
+    try {
+      await api.syncOptions(body);
+      await onChange();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mt-4 border-t border-hair pt-4">
+      <label className="flex cursor-pointer items-center gap-2.5 text-[13px] text-ink">
+        <input
+          type="checkbox"
+          checked={auto.enabled}
+          disabled={busy}
+          onChange={(e) => save({ autoSyncEnabled: e.target.checked })}
+          className="h-4 w-4 accent-[#075985]"
+        />
+        Keep everything up to date while the app is open
+      </label>
+      {auto.enabled && (
+        <div className="mt-2.5 flex flex-wrap items-center gap-2 pl-6.5">
+          <span className="text-[13px] text-ink-muted">Every</span>
+          <div className="w-36">
+            <Select
+              density="sm"
+              value={String(auto.minutes)}
+              disabled={busy}
+              onChange={(e) => save({ autoSyncMinutes: Number(e.target.value) })}
+              aria-label="How often to sync"
+            >
+              {INTERVALS.map((m) => (
+                <option key={m} value={m}>
+                  {m < 60 ? `${m} minutes` : `${m / 60} hour${m > 60 ? "s" : ""}`}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <span className="text-[13px] text-ink-muted">
+            Moodle, gradebook, course files, Echo360 and any outstanding transcripts. It also
+            catches up straight after the machine wakes from sleep.
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -375,130 +438,6 @@ function AppleRow({ status, onChange }: { status: SyncStatus; onChange: () => Pr
     </Destination>
   );
 }
-
-function NotionRow({ status, onChange }: { status: SyncStatus; onChange: () => Promise<void> }) {
-  const [token, setToken] = useState("");
-  const [page, setPage] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState<string | null>(null);
-  const n = status.notion;
-
-  async function connect() {
-    setBusy(true);
-    setMsg(null);
-    try {
-      const r = await api.notionConnect(token, page);
-      setToken("");
-      setMsg(
-        r.created
-          ? `Created a “Uni Study — Deadlines” database. Pushing your deadlines now.`
-          : `Reconnected to your existing database.`,
-      );
-      await api.notionPush().catch(() => {});
-      await onChange();
-    } catch (e) {
-      setMsg(String(e instanceof Error ? e.message : e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Destination
-      name="Notion"
-      connected={n.connected}
-      note={n.connected ? "a database of your deadlines, kept in step" : "creates a deadlines database"}
-    >
-      {n.connected ? (
-        <div className="space-y-2.5">
-          {n.databaseUrl && (
-            <a
-              href={n.databaseUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-block text-[13px] font-medium text-accent-deep hover:underline"
-            >
-              Open the database in Notion ↗
-            </a>
-          )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={async () => {
-                await api.notionDisconnect();
-                await onChange();
-              }}
-            >
-              Disconnect
-            </Button>
-          </div>
-          {n.lastPush && (
-            <p className="text-[12px] text-ink-muted">
-              Last pushed {new Date(n.lastPush).toLocaleString()}
-            </p>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-2.5">
-          <Details summary="Two things to grab from Notion first">
-            <ol className="space-y-1.5">
-              <li>
-                <span className="font-medium text-ink">1.</span> Go to{" "}
-                <a
-                  href="https://www.notion.so/my-integrations"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-medium text-accent-deep hover:underline"
-                >
-                  notion.so/my-integrations
-                </a>{" "}
-                → <strong className="text-ink">New integration</strong> → copy the{" "}
-                <strong className="text-ink">Internal Integration Secret</strong>.
-              </li>
-              <li>
-                <span className="font-medium text-ink">2.</span> Open (or make) the Notion page you
-                want the database to live in, then{" "}
-                <strong className="text-ink">⋯ → Connections → </strong> add your new integration.
-                Copy that page's link.
-              </li>
-            </ol>
-            <p className="mt-2">
-              An internal integration is used rather than a “Connect to Notion” button because that
-              needs a public OAuth app — overkill for something running on your own laptop.
-            </p>
-          </Details>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Input
-              density="sm"
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="ntn_… (integration secret)"
-              spellCheck={false}
-              aria-label="Notion integration secret"
-            />
-            <Input
-              density="sm"
-              value={page}
-              onChange={(e) => setPage(e.target.value)}
-              placeholder="https://notion.so/your-page…"
-              spellCheck={false}
-              aria-label="Notion parent page link"
-            />
-          </div>
-          <Button size="sm" variant="primary" onClick={connect} disabled={busy || !token.trim() || !page.trim()}>
-            {busy ? "Connecting…" : "Connect Notion"}
-          </Button>
-        </div>
-      )}
-      {msg && <p className="mt-2.5 text-[13px] text-ink-muted">{msg}</p>}
-    </Destination>
-  );
-}
-
-/* --- Weekly digest -------------------------------------------------------- */
-
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 function DigestCard() {
@@ -786,14 +725,17 @@ function TimetableCard() {
 
 function Echo360Card() {
   const [connected, setConnected] = useState(false);
+  const [session, setSession] = useState<{ wobbly: boolean; lastWarm: string | null } | null>(null);
   const [sections, setSections] = useState<EchoSection[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
+  const [notes, setNotes] = useState<string[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
 
   async function load() {
     const [s, c] = await Promise.all([api.echoStatus(), api.courses(true)]);
     setConnected(s.connected);
+    setSession(s.session);
     setSections(s.sections);
     setCourses(c);
   }
@@ -843,6 +785,32 @@ function Echo360Card() {
     setSections(next);
     await api.echoConfig({ sections: next });
   }
+  async function discover() {
+    setBusy("discover");
+    setNotes([]);
+    setMsg("Opening each course's Echo360 link on Moodle to find its recordings…");
+    try {
+      const r = await api.echoDiscover();
+      if (!r.ok) {
+        setMsg(`Couldn't look up your courses: ${r.error}`);
+        return;
+      }
+      if (r.sections) setSections(r.sections);
+      setNotes(r.notes ?? []);
+      const n = r.found?.length ?? 0;
+      setMsg(
+        n
+          ? `Matched ${n} section${n === 1 ? "" : "s"}${r.changed ? `, ${r.changed} updated` : " — all already correct"}. ` +
+            `Use Sync now to pull them.`
+          : "Couldn't match any sections automatically — see below.",
+      );
+    } catch (e) {
+      setMsg(`Couldn't look up your courses: ${e}`);
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function sync() {
     setBusy("sync");
     setMsg("Pulling lectures — fetching captions or downloading & transcribing audio. This can take a while.");
@@ -851,7 +819,10 @@ function Echo360Card() {
       const c = r.counts;
       setMsg(
         r.ok && c
-          ? `Done — ${c.transcribed} transcribed · ${c.noRecording} not recorded yet · ${c.failed} failed (of ${c.lessons} classes)`
+          ? `Done — ${c.lessons} class${c.lessons === 1 ? "" : "es"} found · ${c.transcribed} newly transcribed` +
+            (c.stillWaiting ? ` · ${c.stillWaiting} not published yet` : "") +
+            (c.deferred ? ` · ${c.deferred} queued for the next run` : "") +
+            (c.failed ? ` · ${c.failed} failed` : "")
           : `Error: ${r.error}`,
       );
     } catch (e) {
@@ -869,10 +840,21 @@ function Echo360Card() {
       >
         Echo360 lecture recordings
       </SectionTitle>
-      <p className="mb-5 text-[13px] text-ink-muted">
-        Log in <strong className="font-semibold text-ink">once</strong> — new recordings then
-        auto-transcribe on every launch, and each one gets study notes and a flashcard deck.
+      <p className="mb-5 text-[13px] leading-relaxed text-ink-muted">
+        Log in <strong className="font-semibold text-ink">once</strong>. Echo360's cookies carry no
+        expiry date — they simply go stale if the session sits idle — so the app touches Echo360
+        every ten minutes and saves the refreshed session. New recordings transcribe on their own,
+        and each one gets study notes and a flashcard deck.
+        {session?.lastWarm && (
+          <> Session last confirmed {new Date(session.lastWarm).toLocaleString()}.</>
+        )}
       </p>
+      {session?.wobbly && connected && (
+        <Notice tone="warn" className="mb-5">
+          Echo360 turned down the saved session on the last try. It's being retried rather than
+          thrown away — if this doesn't clear, use <strong className="font-semibold">Reconnect</strong>.
+        </Notice>
+      )}
 
       <div className="mb-6 flex flex-wrap gap-2">
         <Button size="sm" onClick={connect} disabled={busy === "connect"}>
@@ -880,6 +862,9 @@ function Echo360Card() {
         </Button>
         <Button size="sm" variant="primary" onClick={verify} disabled={busy === "verify"}>
           {busy === "verify" ? "Checking…" : "I've connected"}
+        </Button>
+        <Button size="sm" onClick={discover} disabled={busy === "discover" || !connected}>
+          {busy === "discover" ? "Looking…" : "Find my courses"}
         </Button>
         <Button size="sm" onClick={sync} disabled={busy === "sync"}>
           {busy === "sync" ? "Syncing…" : "Sync now"}
@@ -891,6 +876,11 @@ function Echo360Card() {
         <div className="mb-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
           Sections → course
         </div>
+        <p className="mb-3 text-[13px] leading-relaxed text-ink-muted">
+          <strong className="font-semibold text-ink">Find my courses</strong> reads each course's
+          Echo360 link on Moodle and fills this in for you — the course comes from the link itself,
+          so it can't drift out of step with the label.
+        </p>
         <div className="divide-y divide-hair">
           {sections.map((s) => (
             <div key={s.sectionId} className="flex items-center gap-3 py-2.5 text-sm">
@@ -916,6 +906,18 @@ function Echo360Card() {
         <AddSection onAdd={addSection} />
       </div>
       {msg && <p className="mt-4 text-sm text-ink-muted">{msg}</p>}
+      {notes.length > 0 && (
+        <ul className="mt-3 space-y-1.5 text-[13px] leading-relaxed text-ink-muted">
+          {notes.map((n, i) => (
+            <li key={i} className="flex gap-2">
+              <span aria-hidden className="text-hair-strong">
+                •
+              </span>
+              <span>{n}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }

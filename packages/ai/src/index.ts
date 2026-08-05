@@ -1,4 +1,4 @@
-export { complete, hasApiKey, MODEL_FAST, MODEL_DRAFT } from "./client.js";
+export { complete, completeStream, hasApiKey, MODEL_FAST, MODEL_DRAFT } from "./client.js";
 export {
   summariseLecture,
   transcriptToNotes,
@@ -15,6 +15,7 @@ export {
   indexAll,
   retrieve,
   type RetrievedChunk,
+  type ChunkSource,
 } from "./retrieval.js";
 export {
   outlineAssignment,

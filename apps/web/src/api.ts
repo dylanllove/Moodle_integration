@@ -33,12 +33,24 @@ export interface Lecture {
   duration_sec: number | null;
   transcript_status?: string | null;
   has_text?: number;
+  /** A study-notes summary has been written for it. */
+  has_notes?: number;
+  /** When the transcript last changed — how "new" the material is. */
+  transcript_at?: string | null;
 }
 
 export interface EchoSection {
   sectionId: string;
   courseId: string | null;
   label?: string;
+}
+
+export interface DiscoveredSection {
+  sectionId: string;
+  courseId: string | null;
+  courseCode: string | null;
+  label: string;
+  via: "lti" | "enrollments";
 }
 
 export interface Note {
@@ -261,6 +273,7 @@ export interface SyncStatus {
     lastPush: string | null;
   };
   autoPush: boolean;
+  auto: AutoSync;
   deadlines: number;
 }
 
@@ -278,6 +291,168 @@ export interface DigestStatus {
     subject: string;
     error: string | null;
   } | null;
+}
+
+/** A hit from the one search box — see the server's search.ts for the shape. */
+export interface SearchHit {
+  id: string;
+  group:
+    | "course"
+    | "deadline"
+    | "class"
+    | "assignment"
+    | "lecture"
+    | "material"
+    | "note"
+    | "deck"
+    | "content";
+  title: string;
+  subtitle: string | null;
+  badge: string | null;
+  to: string | null;
+  href: string | null;
+  snippet: string | null;
+  score: number;
+}
+
+/** Where an answer came from, so it can be opened and checked. */
+export interface AnswerSource {
+  label: string;
+  kind: "note" | "lecture" | "material" | "course-page";
+  courseId: string | null;
+  courseCode: string | null;
+  to: string | null;
+  href: string | null;
+}
+
+export interface SyncPhase {
+  key: string;
+  label: string;
+  status: "pending" | "running" | "done" | "skipped" | "error";
+  detail: string | null;
+}
+
+/* --- Notion ---------------------------------------------------------------- */
+
+export type NotionLinkKind = "assessments" | "notes";
+export type NotionDirection = "push" | "pull" | "both";
+
+export interface NotionTarget {
+  id: string;
+  object: "page" | "database";
+  title: string;
+  url: string;
+  parent: string;
+  shape: "assessments" | "notes" | "unknown";
+  properties: Record<string, string>;
+}
+
+export interface NotionLink {
+  id: string;
+  course_id: string | null;
+  kind: NotionLinkKind;
+  notion_id: string;
+  notion_url: string | null;
+  title: string | null;
+  direction: NotionDirection;
+  last_push: string | null;
+  last_pull: string | null;
+}
+
+export interface NotionSuggestion {
+  course_id: string | null;
+  courseCode: string | null;
+  kind: NotionLinkKind;
+  notion_id: string;
+  title: string;
+  url: string;
+  because: string;
+}
+
+export interface NotionStatus {
+  configured: boolean;
+  connected: boolean;
+  parentPage: string | null;
+  links: NotionLink[];
+  courses: { id: string; code: string | null; name: string }[];
+}
+
+export interface NotionSyncResult {
+  ok: boolean;
+  created: number;
+  updated: number;
+  archived: number;
+  pulled: number;
+  skipped: number;
+  perLink: {
+    title: string | null;
+    kind: string;
+    courseCode: string | null;
+    counts: { created: number; updated: number; archived: number; pulled: number; skipped: number };
+  }[];
+}
+
+export interface AutoSync {
+  enabled: boolean;
+  minutes: number;
+  nextAt: string | null;
+}
+
+export interface SyncProgress {
+  running: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  phases: SyncPhase[];
+  error: string | null;
+  auto?: AutoSync;
+}
+
+/**
+ * Stream an answer token-by-token. Reads the SSE frames the ask route writes;
+ * `onDelta` fires per fragment and `onSources` once, up front.
+ */
+async function askStream(
+  question: string,
+  history: { role: string; content: string }[],
+  handlers: {
+    onSources?: (s: AnswerSource[]) => void;
+    onDelta: (text: string) => void;
+    signal?: AbortSignal;
+  },
+): Promise<void> {
+  const res = await fetch("/api/ai/ask/stream", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ question, history }),
+    signal: handlers.signal,
+  });
+  if (!res.ok || !res.body) {
+    const detail = await res.json().catch(() => null);
+    throw new Error(detail?.error ?? `${res.status} ${res.statusText}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const line = frame.split("\n").find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      const event = JSON.parse(line.slice(5).trim()) as
+        | { type: "sources"; sources: AnswerSource[] }
+        | { type: "delta"; text: string }
+        | { type: "done" }
+        | { type: "error"; message: string };
+      if (event.type === "sources") handlers.onSources?.(event.sources);
+      else if (event.type === "delta") handlers.onDelta(event.text);
+      else if (event.type === "error") throw new Error(event.message);
+    }
+  }
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -385,8 +560,12 @@ export const api = {
       google?: { ok: boolean; pushed?: number; removed?: number; error?: string };
       notion?: { ok: boolean; created?: number; updated?: number; archived?: number; error?: string };
     }>("/sync/push", { method: "POST" }),
-  syncOptions: (body: { autoPush?: boolean; appleSubscribed?: boolean }) =>
-    req<{ ok: boolean }>("/sync/options", { method: "PUT", body: JSON.stringify(body) }),
+  syncOptions: (body: {
+    autoPush?: boolean;
+    appleSubscribed?: boolean;
+    autoSyncEnabled?: boolean;
+    autoSyncMinutes?: number;
+  }) => req<{ ok: boolean; auto: AutoSync }>("/sync/options", { method: "PUT", body: JSON.stringify(body) }),
 
   gcalStatus: () =>
     req<{
@@ -411,16 +590,46 @@ export const api = {
       "/calendar/subscribe",
     ),
 
-  notionConnect: (token: string, page: string) =>
-    req<{ ok: boolean; name: string; databaseId: string; url: string; created: boolean }>(
-      "/notion/connect",
-      { method: "POST", body: JSON.stringify({ token, page }) },
+  // --- Notion (two-way, one database per course if you like) ---
+  notionStatus: () => req<NotionStatus>("/notion/status"),
+  notionToken: (token: string) =>
+    req<{ ok: boolean; name: string; pages: NotionTarget[]; databases: NotionTarget[] }>(
+      "/notion/token",
+      { method: "POST", body: JSON.stringify({ token }) },
     ),
-  notionPush: () =>
-    req<{ ok: boolean; created: number; updated: number; archived: number }>("/notion/push", {
-      method: "POST",
+  notionInventory: () =>
+    req<{ ok: boolean; name: string; pages: NotionTarget[]; databases: NotionTarget[] }>(
+      "/notion/inventory",
+    ),
+  notionSuggest: () =>
+    req<{ ok: boolean; suggestions: NotionSuggestion[]; unmatched: string[] }>("/notion/suggest"),
+  notionSetParent: (page: string) =>
+    req<{ ok: boolean; parentPage: string }>("/notion/parent", {
+      method: "PUT",
+      body: JSON.stringify({ page }),
     }),
-  notionDisconnect: () => req<{ ok: boolean }>("/notion/disconnect", { method: "POST" }),
+  notionLink: (body: {
+    course_id: string | null;
+    kind: NotionLinkKind;
+    notion: string;
+    direction?: NotionDirection;
+  }) =>
+    req<{ ok: boolean; link: NotionLink; fields: Record<string, string | null> }>("/notion/links", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  notionCreateDatabase: (body: { course_id: string | null; kind: NotionLinkKind; title?: string }) =>
+    req<{ ok: boolean; link: NotionLink; created: boolean }>("/notion/databases", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  notionUnlink: (id: string) =>
+    req<{ ok: boolean; links: NotionLink[] }>(`/notion/links/${id}`, { method: "DELETE" }),
+  notionSync: () => req<NotionSyncResult>("/notion/sync", { method: "POST" }),
+  notionSchema: (id: string) =>
+    req<{ ok: boolean; title: string; object: string; shape: string; fields: Record<string, string | null> }>(
+      `/notion/schema?id=${encodeURIComponent(id)}`,
+    ),
 
   // --- Course materials (slides & readings, filed by week) ---
   materials: (courseId?: string) =>
@@ -568,7 +777,14 @@ export const api = {
 
   // Echo360
   echoStatus: () =>
-    req<{ connected: boolean; instanceId: string | null; sections: EchoSection[] }>("/echo360/status"),
+    req<{
+      connected: boolean;
+      instanceId: string | null;
+      sections: EchoSection[];
+      session: { failures: number; wobbly: boolean; lastWarm: string | null };
+    }>("/echo360/status"),
+  echoKeepalive: () =>
+    req<{ ok: boolean; reason?: string }>("/echo360/keepalive", { method: "POST" }),
   echoLogin: () => req<{ ok: boolean; error?: string }>("/echo360/login", { method: "POST" }),
   echoVerify: () => req<{ connected: boolean; error?: string }>("/echo360/verify", { method: "POST" }),
   echoConfig: (body: { instanceId?: string; sections?: EchoSection[] }) =>
@@ -576,11 +792,31 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  echoDiscover: () =>
+    req<{
+      ok: boolean;
+      error?: string;
+      expired?: boolean;
+      changed?: number;
+      found?: DiscoveredSection[];
+      notes?: string[];
+      sections?: EchoSection[];
+    }>("/echo360/discover", { method: "POST", body: JSON.stringify({ apply: true }) }),
   echoSync: () =>
     req<{
       ok: boolean;
       error?: string;
-      counts?: { lessons: number; transcribed: number; noRecording: number; failed: number };
+      expired?: boolean;
+      counts?: {
+        lessons: number;
+        sections: number;
+        failed: number;
+        attempted: number;
+        transcribed: number;
+        stillWaiting: number;
+        deferred: number;
+        noted: number;
+      };
     }>("/echo360/sync", { method: "POST" }),
   lectures: (courseId?: string) =>
     req<Lecture[]>(`/lectures${courseId ? `?course_id=${courseId}` : ""}`),
@@ -616,7 +852,18 @@ export const api = {
     }),
   reindex: () => req<{ chunks: number }>("/ai/reindex", { method: "POST" }),
   ask: (question: string, history: { role: string; content: string }[]) =>
-    req<{ answer: string }>("/ai/ask", { method: "POST", body: JSON.stringify({ question, history }) }),
+    req<{ answer: string; sources: AnswerSource[] }>("/ai/ask", {
+      method: "POST",
+      body: JSON.stringify({ question, history }),
+    }),
+  askStream,
+  search: (q: string, signal?: AbortSignal) =>
+    req<{ q: string; hits: SearchHit[] }>(`/search?q=${encodeURIComponent(q)}`, { signal }),
+  syncRun: () =>
+    req<{ ok: boolean; alreadyRunning: boolean; state: SyncProgress }>("/sync/run", {
+      method: "POST",
+    }),
+  syncProgress: () => req<SyncProgress>("/sync/progress"),
   cheatsheet: (course_id: string) =>
     req<{ ok: boolean; note_id: string; markdown: string }>("/ai/cheatsheet", {
       method: "POST",

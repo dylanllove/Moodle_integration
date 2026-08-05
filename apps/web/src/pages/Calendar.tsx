@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, type CalEvent, type Commitment, type Course } from "../api.js";
 import { courseColor } from "../colors.js";
 import {
@@ -39,14 +40,19 @@ const VIEWS = [
 ];
 
 export function Calendar() {
+  // ?focus=YYYY-MM-DD lands on the day a search hit falls on, rather than on
+  // today with the student left to find it.
+  const [params] = useSearchParams();
+  const focus = params.get("focus");
+  const focusDate = focus && !Number.isNaN(Date.parse(focus)) ? new Date(`${focus}T12:00:00`) : null;
   const [events, setEvents] = useState<CalEvent[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [view, setView] = useState<View>("month");
-  const [cursor, setCursor] = useState(() => startOfMonth(new Date()));
-  const [weekCursor, setWeekCursor] = useState(() => mondayOf(new Date()));
+  const [cursor, setCursor] = useState(() => startOfMonth(focusDate ?? new Date()));
+  const [weekCursor, setWeekCursor] = useState(() => mondayOf(focusDate ?? new Date()));
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [showPersonal, setShowPersonal] = useState(true);
-  const [selected, setSelected] = useState<string>(dayKey(new Date()));
+  const [selected, setSelected] = useState<string>(dayKey(focusDate ?? new Date()));
   const [loading, setLoading] = useState(true);
 
   async function load() {

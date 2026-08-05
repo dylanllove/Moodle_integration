@@ -35,8 +35,18 @@ export {
   loginEcho360,
   listLessons,
   fetchTranscript,
+  fetchAnyTranscript,
   sniffAudioManifest,
+  probeClassroom,
+  ensureEchoLoggedIn,
+  keepEchoSessionWarm,
   withEchoLock,
   type EchoLesson,
   type AudioManifest,
+  type ClassroomProbe,
 } from "./echo360.js";
+export {
+  discoverEchoSections,
+  type DiscoveredSection,
+  type DiscoveryResult,
+} from "./echo-discover.js";

@@ -1,7 +1,8 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { useEffect, useState, type ReactNode } from "react";
-import { api } from "./api.js";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { api, type SyncProgress } from "./api.js";
 import { ChatWidget } from "./ChatWidget.js";
+import { CommandPalette } from "./CommandPalette.js";
 
 function relTime(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -10,6 +11,13 @@ function relTime(iso: string | null | undefined): string | null {
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
   return `${Math.floor(s / 86400)}d ago`;
+}
+
+/** "12m" until the next scheduled sync, or null if it's due/unknown. */
+function untilNext(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const mins = Math.round((new Date(iso).getTime() - Date.now()) / 60_000);
+  return mins > 0 ? `${mins}m` : null;
 }
 
 /**
@@ -56,22 +64,37 @@ interface NavItem {
 }
 
 export function Layout() {
-  const [syncing, setSyncing] = useState(false);
-  const [status, setStatus] = useState<string | null>(null);
+  const [progress, setProgress] = useState<SyncProgress | null>(null);
+  const [showPhases, setShowPhases] = useState(false);
   const [lastSynced, setLastSynced] = useState<string | null>(null);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [cardsDue, setCardsDue] = useState(0);
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const { pathname } = useLocation();
   const navigate = useNavigate();
 
-  useEffect(() => {
+  const refreshSidebar = useCallback(() => {
     api.settings().then((s) => setLastSynced(s.last_synced ?? null)).catch(() => {});
     // A quiet nudge in the nav is the whole retention mechanism for flashcards.
     api
       .decks()
       .then((d) => setCardsDue(d.decks.reduce((n, deck) => n + deck.due, 0)))
       .catch(() => {});
-  }, [pathname]);
+  }, []);
+
+  useEffect(refreshSidebar, [pathname, refreshSidebar]);
+
+  // ⌘K / Ctrl-K from anywhere. Ignored while typing so it can't eat a keystroke
+  // meant for a note or a draft.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() !== "k" || !(e.metaKey || e.ctrlKey)) return;
+      e.preventDefault();
+      setPaletteOpen((o) => !o);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // First run on a fresh clone: nothing is configured, so send them to setup
   // rather than an empty dashboard. Only redirects once, and never away from a
@@ -95,19 +118,70 @@ export function Layout() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * Follow a sync that's already under way — including the one the server kicks
+   * off at launch, which used to happen entirely behind the student's back.
+   * Polling stops the moment it finishes, so an idle app is silent.
+   */
+  const poll = useRef<number | null>(null);
+  const watch = useCallback(() => {
+    if (poll.current != null) return;
+    poll.current = window.setInterval(async () => {
+      try {
+        const state = await api.syncProgress();
+        setProgress(state);
+        if (!state.running) {
+          window.clearInterval(poll.current!);
+          poll.current = null;
+          refreshSidebar();
+          // Whoever's on screen refetches itself rather than being reloaded.
+          window.dispatchEvent(new CustomEvent("uni:synced"));
+        }
+      } catch {
+        window.clearInterval(poll.current!);
+        poll.current = null;
+      }
+    }, 900);
+  }, [refreshSidebar]);
+
+  /**
+   * Syncs now start on their own — at launch, on a timer, and on waking from
+   * sleep. A heartbeat is what lets the sidebar notice one it didn't press the
+   * button for; without it, background work is invisible until you navigate.
+   */
+  useEffect(() => {
+    const check = () =>
+      api
+        .syncProgress()
+        .then((state) => {
+          setProgress(state);
+          if (state.running) watch();
+        })
+        .catch(() => {});
+    void check();
+    const heartbeat = window.setInterval(() => {
+      if (poll.current == null) void check();
+    }, 45_000);
+    return () => {
+      window.clearInterval(heartbeat);
+      if (poll.current != null) window.clearInterval(poll.current);
+    };
+  }, [watch]);
+
   async function sync() {
-    setSyncing(true);
-    setStatus(null);
+    setShowPhases(true);
     try {
-      const r = await api.sync();
-      setStatus(r.ok ? "Up to date" : "Sync failed");
-      if (r.ok) setTimeout(() => location.reload(), 500);
+      const r = await api.syncRun();
+      setProgress(r.state);
+      watch();
     } catch {
-      setStatus("Sync failed");
-    } finally {
-      setSyncing(false);
+      setProgress((p) => (p ? { ...p, error: "Couldn't start the sync." } : p));
     }
   }
+
+  const syncing = progress?.running ?? false;
+  const runningPhase = progress?.phases.find((p) => p.status === "running");
+  const failed = progress?.phases.filter((p) => p.status === "error") ?? [];
 
   return (
     <div className="min-h-screen text-ink">
@@ -127,7 +201,29 @@ export function Layout() {
             </div>
           </div>
 
-          <nav className="flex flex-col gap-0.5">
+          {/* The one box. Discoverable as a button, fast as a shortcut. */}
+          <button
+            onClick={() => setPaletteOpen(true)}
+            className="mb-5 flex items-center gap-2.5 rounded-pill border border-hair bg-page px-3 py-2 text-left text-[13px] text-ink-muted transition duration-200 hover:bg-chip hover:text-ink"
+          >
+            <svg
+              className="h-4 w-4 shrink-0"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.9"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <circle cx="11" cy="11" r="7" />
+              <path d="m20 20-3.5-3.5" />
+            </svg>
+            <span className="flex-1">Search everything</span>
+            <kbd className="rounded-[5px] bg-chip px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd>
+          </button>
+
+          {/* Scrolls rather than pushing the sync controls off a short screen. */}
+          <nav className="pane -mr-2 flex min-h-0 flex-col gap-0.5 pr-2">
             {/* Only present until the essentials are connected. */}
             {needsSetup && (
               <NavItemLink item={{ to: "/setup", label: "Finish setup", icon: SparkIcon, end: true }} />
@@ -146,7 +242,19 @@ export function Layout() {
             ))}
           </nav>
 
-          <div className="mt-auto border-t border-hair pt-5">
+          <div className="mt-auto shrink-0 border-t border-hair pt-5">
+            {showPhases && progress && (
+              <>
+                <SyncPhases progress={progress} />
+                <p className="mb-3 px-1 text-[11px] leading-snug text-ink-muted">
+                  {progress.auto?.enabled
+                    ? `Runs itself every ${progress.auto.minutes} minutes${
+                        untilNext(progress.auto.nextAt) ? ` · next in ${untilNext(progress.auto.nextAt)}` : ""
+                      }.`
+                    : "Automatic syncing is off — change it in Settings."}
+                </p>
+              </>
+            )}
             <button
               onClick={sync}
               disabled={syncing}
@@ -161,11 +269,21 @@ export function Layout() {
               >
                 <path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-              {syncing ? "Syncing…" : "Sync Moodle"}
+              {syncing ? "Syncing…" : "Sync everything"}
             </button>
-            <p className="mt-2.5 text-center text-[13px] text-ink-muted">
-              {status ?? (relTime(lastSynced) ? `Synced ${relTime(lastSynced)}` : "Not synced yet")}
-            </p>
+            {/* One line of truth: what it's doing, or what it last did. */}
+            <button
+              onClick={() => setShowPhases((s) => !s)}
+              className="mt-2.5 w-full text-center text-[13px] text-ink-muted transition duration-200 hover:text-ink"
+            >
+              {syncing
+                ? (runningPhase?.label ?? "Starting…")
+                : failed.length > 0
+                  ? `${failed.length} step${failed.length === 1 ? " needs" : "s need"} attention`
+                  : relTime(lastSynced)
+                    ? `Synced ${relTime(lastSynced)}`
+                    : "Not synced yet"}
+            </button>
           </div>
         </aside>
 
@@ -176,6 +294,40 @@ export function Layout() {
         </main>
       </div>
       <ChatWidget />
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+    </div>
+  );
+}
+
+/**
+ * What the sync is actually doing. A full run pulls a semester of slide decks
+ * and can transcribe an hour of lecture audio — a spinner with no detail leaves
+ * you unable to tell "working" from "stuck", and hides the one step that failed.
+ */
+function SyncPhases({ progress }: { progress: SyncProgress }) {
+  const MARK: Record<string, string> = {
+    pending: "·",
+    running: "→",
+    done: "✓",
+    skipped: "–",
+    error: "!",
+  };
+  const TONE: Record<string, string> = {
+    pending: "text-ink-muted/50",
+    running: "text-accent-deep font-medium",
+    done: "text-ink-muted",
+    skipped: "text-ink-muted/60",
+    error: "text-rose-700",
+  };
+  return (
+    <div className="pane mb-3 max-h-56 space-y-1 rounded-field bg-chip/60 px-3 py-2.5">
+      {progress.phases.map((p) => (
+        <div key={p.key} className={`text-[11px] leading-snug ${TONE[p.status]}`}>
+          <span className="mr-1.5 inline-block w-2 font-mono">{MARK[p.status]}</span>
+          {p.label}
+          {p.detail && <span className="block pl-[14px] text-ink-muted/70">{p.detail}</span>}
+        </div>
+      ))}
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { notionConnected } from "../notion-links.js";
 import { spawn } from "node:child_process";
 import { getDb, getSetting, setSetting } from "@uni/db";
 import { echoConnected, syncTimetable } from "@uni/lms";
@@ -111,7 +112,7 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
       decks: count("SELECT COUNT(*) AS n FROM decks"),
       sync: {
         google: Boolean(getSetting("gcal_refresh_token")),
-        notion: Boolean(process.env.NOTION_TOKEN && getSetting("notion_database_id")),
+        notion: notionConnected(),
         apple: getSetting("ics_subscribed") === "true",
       },
       digest: getSetting("digest_enabled") === "true",

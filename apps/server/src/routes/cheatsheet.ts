@@ -72,6 +72,15 @@ async function gatherCorpus(courseId: string): Promise<string> {
     .all(courseId) as { title: string; text: string }[];
   add("Lecture transcripts / content", transcripts.map((t) => `### ${t.title}\n${t.text}`).join("\n\n"));
 
+  // Slides and readings already on disk, in teaching order.
+  const stored = db
+    .prepare(
+      `SELECT title, week, text FROM materials
+       WHERE course_id = ? AND text IS NOT NULL AND length(text) > 200
+       ORDER BY week IS NULL, week, title`,
+    )
+    .all(courseId) as { title: string; week: number | null; text: string }[];
+
   const numId = courseNumericId(courseId);
   if (moodleApiConfigured() && numId != null) {
     try {
@@ -84,7 +93,10 @@ async function gatherCorpus(courseId: string): Promise<string> {
       /* skip */
     }
     // Slides fill whatever budget remains (usually the bulk of the material).
-    if (budget > 2000) {
+    // Prefer the copies the file sync already downloaded and extracted: same
+    // text, no round trip, and it still works when Moodle is down or the
+    // student is offline. Only reach for the network if nothing's stored.
+    if (budget > 2000 && !stored.length) {
       try {
         const slides = await getCourseSlideFiles(numId);
         const chunks: string[] = [];
@@ -107,6 +119,13 @@ async function gatherCorpus(courseId: string): Promise<string> {
       }
     }
   }
+
+  add(
+    "Lecture slides & readings",
+    stored
+      .map((s) => `### ${s.week ? `Week ${s.week} — ` : ""}${s.title}\n${s.text}`)
+      .join("\n\n"),
+  );
 
   return parts.join("\n");
 }

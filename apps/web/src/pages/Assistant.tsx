@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, type Assignment } from "../api.js";
 import { Markdown } from "../Markdown.js";
 import {
@@ -17,15 +18,18 @@ import {
 } from "../ui.js";
 
 export function Assistant() {
+  // ?assignment= lands on the right brief instead of the first one.
+  const [params] = useSearchParams();
+  const wanted = params.get("assignment");
   const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(wanted);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api.assignments()
       .then((a) => {
         setAssignments(a);
-        if (a[0]) setSelected(a[0].id);
+        setSelected((cur) => cur ?? a[0]?.id ?? null);
       })
       .catch(() => {})
       .finally(() => setLoading(false));

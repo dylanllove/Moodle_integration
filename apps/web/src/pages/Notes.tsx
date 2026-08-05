@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, type Note } from "../api.js";
 import { Markdown } from "../Markdown.js";
 import {
@@ -13,19 +14,26 @@ import {
 } from "../ui.js";
 
 export function Notes() {
+  // ?note= opens one directly — search and answer citations link here.
+  const [params] = useSearchParams();
+  const wanted = params.get("note");
   const [notes, setNotes] = useState<Note[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(wanted);
   const [loading, setLoading] = useState(true);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const n = await api.notes();
     setNotes(n);
     setSelected((cur) => cur ?? n[0]?.id ?? null);
     setLoading(false);
-  }
+  }, []);
   useEffect(() => {
     refresh();
-  }, []);
+  }, [refresh]);
+
+  useEffect(() => {
+    if (wanted) setSelected(wanted);
+  }, [wanted]);
 
   async function newNote() {
     const n = await api.createNote({ title: "New note", body: "" });

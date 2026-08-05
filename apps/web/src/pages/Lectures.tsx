@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Lecture, type Transcript, type TranscriptSegment, type Course } from "../api.js";
+import { useSyncedRefresh } from "../hooks.js";
 import {
   Card,
   PageHeader,
@@ -17,26 +19,40 @@ import { Markdown } from "../Markdown.js";
 import { courseColor } from "../colors.js";
 
 export function Lectures() {
+  // ?lecture= opens one directly (search, or a citation on an answer);
+  // ?course= narrows the list to one course's recordings.
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const wanted = params.get("lecture");
+  const onlyCourse = params.get("course");
   const [lectures, setLectures] = useState<Lecture[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(wanted);
   const [loading, setLoading] = useState(true);
 
-  async function load() {
+  const load = useCallback(async () => {
     const [l, c] = await Promise.all([api.lectures(), api.courses()]);
     setLectures(l);
     setCourses(c);
     setSelected((cur) => cur ?? l.find((x) => x.has_text)?.id ?? l[0]?.id ?? null);
     setLoading(false);
-  }
+  }, []);
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
+
+  useSyncedRefresh(load);
+
+  // A later deep link must win over whatever was already open.
+  useEffect(() => {
+    if (wanted) setSelected(wanted);
+  }, [wanted]);
 
   // Group lectures under their (active) course.
   const groups = useMemo(() => {
     const byCourse = new Map<string, { course: Course | null; items: Lecture[] }>();
     for (const l of lectures) {
+      if (onlyCourse && l.course_id !== onlyCourse) continue;
       const key = l.course_id ?? "none";
       const course = courses.find((c) => c.id === l.course_id) ?? null;
       const g = byCourse.get(key) ?? { course, items: [] };
@@ -44,17 +60,30 @@ export function Lectures() {
       byCourse.set(key, g);
     }
     return [...byCourse.values()].sort((a, b) => (a.course?.code ?? "").localeCompare(b.course?.code ?? ""));
-  }, [lectures, courses]);
+  }, [lectures, courses, onlyCourse]);
 
-  const total = lectures.length;
-  const done = lectures.filter((l) => l.has_text).length;
+  // Count what's actually on screen, so a course-scoped view doesn't claim
+  // credit for the whole semester.
+  const shown = groups.flatMap((g) => g.items);
+  const total = shown.length;
+  const done = shown.filter((l) => l.has_text).length;
 
   return (
     <div>
       <PageHeader
         title="Lectures & transcripts"
         subtitle={total ? `${done} of ${total} transcribed across ${groups.length} course${groups.length > 1 ? "s" : ""}` : "Your current courses' lectures"}
-        actions={<UploadButton courses={courses} onDone={load} />}
+        actions={
+          <>
+            {/* Arriving scoped from search shouldn't feel like the rest vanished. */}
+            {onlyCourse && (
+              <Button onClick={() => navigate("/lectures", { replace: true })}>
+                Show all courses
+              </Button>
+            )}
+            <UploadButton courses={courses} onDone={load} />
+          </>
+        }
       />
       {loading && <Loading label="Loading lectures…" />}
       <div className={`grid grid-cols-1 gap-6 lg:grid-cols-[22rem_1fr] ${loading ? "hidden" : ""}`}>
@@ -121,6 +150,11 @@ export function Lectures() {
  */
 function StatusDot({ l }: { l: Lecture }) {
   if (l.has_text) return null;
+  // A class that hasn't happened yet isn't waiting on us, and a bare dash reads
+  // like something went wrong. Say what it actually is.
+  if (l.recorded_at && new Date(l.recorded_at).getTime() > Date.now()) {
+    return <span className="text-xs text-ink-muted">upcoming</span>;
+  }
   if (l.transcript_status === "no_recording") return <Badge tone="amber">no rec</Badge>;
   if (["pending", "downloading", "transcribing"].includes(l.transcript_status ?? "")) {
     return <Badge tone="neutral">working…</Badge>;

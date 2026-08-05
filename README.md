@@ -14,8 +14,12 @@ Echo360, then does the boring parts for you:
   *"what do I need on the final to get an A?"* — flagging targets that have slipped out of reach.
 -  **Every course file, filed by week** — downloads all slides, readings and handouts into
   `data/materials/<COURSE>/Week 03/…` and extracts the text for study use.
--  **Auto-transcribes lectures** — logs into Echo360, downloads your recordings and transcribes
-  them (or grabs existing captions), then writes study notes.
+-  **Auto-transcribes lectures** — logs into Echo360 **once**, then keeps the session alive itself.
+  Every lecture that can have a transcript gets one: Echo's own captions where they exist, our own
+  transcription where they don't, and extracted text for the slide decks Moodle files as lectures.
+  Each one then gets study notes and a flashcard deck.
+-  **Stays current while it's open** — the whole pipeline re-runs every twenty minutes (and right
+  after the laptop wakes), so a day-old app is never what you're looking at.
 -  **Flashcards that make themselves** — a deck per lecture, plus decks from any course file, with
   an in-app spaced-repetition reviewer and one-click **Quizlet** / **Anki** export.
 -  **Sunday-night digest** — one email: what's due, how heavy the week looks, what's new, cards
@@ -24,7 +28,10 @@ Echo360, then does the boring parts for you:
   exam-focused cheat sheet per course.
 -  **One-click study pack** — every course exported as Markdown to drop into any LLM.
 -  **Assignment assistant** — outlines, drafts you rewrite, and feedback. *You stay the author.*
--  **Chat** — quick questions across your courses ("what's due this week?", "where's my next lab?").
+-  **One search box (`⌘K`)** — courses, files, lectures, deadlines, decks and notes, plus a
+  full-text search *inside* your slides and transcripts. Enter goes straight to the thing.
+-  **Chat** — quick questions across your courses ("what's due this week?", "where's my next lab?"),
+  streamed as they're written and footnoted with the lecture or slide each answer came from.
 
 Everything runs **on your machine**. Your data, credentials, lecture audio and notes never leave it
 except to talk directly to Moodle, Echo360, OpenAI and whichever of Google/Notion/your mail provider
@@ -59,7 +66,7 @@ Only the first two are required. The rest are offered in order and can be done w
 | **Moodle** | Sign in with your university username and password and Moodle mints its own access token — the same mechanism the official Moodle app uses. Your password is sent once to your university and never stored. If your uni logs in via Microsoft/Google/Okta, switch to the **Paste a token** tab. |
 | **OpenAI key** | Validated against OpenAI before saving. Powers transcripts, notes, cheat sheets, flashcards and chat. |
 | **Timetable** | Paste your timetable's iCal *subscribe* link. It's fetched and imported straight away so you see the class count. A `.ics` file dropped in the project folder is also auto-detected. |
-| **Echo360** | Log in once and new recordings download, transcribe, and turn into notes + a flashcard deck on every launch. |
+| **Echo360** | Log in once. The session is kept warm from then on, and new recordings download, transcribe, and turn into notes + a flashcard deck on their own. |
 | **Course files** | Downloads every slide deck and reading into week folders and extracts their text. Re-runs each launch, fetching only what's new. |
 | **Weightings** | Imports the gradebook so the grade calculator works. If your site doesn't publish weightings, type them in once from the course outline. |
 | **Life outside class** | Your weekly commitments — shifts, training, family. Without these the workload heatmap is fiction. |
@@ -72,12 +79,36 @@ Only the first two are required. The rest are offered in order and can be done w
 | --- | --- | --- |
 | **Google Calendar** | OAuth. Writes to its own *Uni Study* calendar so you can hide it in one click; re-syncs update in place and cancelled items are deleted. | `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` in `.env` — Google only issues OAuth clients per project, so a self-hosted app can't ship one. |
 | **Apple Calendar** *(and Outlook, or Google without OAuth)* | A subscribable `webcal://` feed with per-event alarms at your reminder lead time. Refreshes hourly **even when Uni Study isn't running**. Apple has no write API that doesn't involve storing your Apple ID, so subscription is both the standard route and the more robust one. | Nothing. One click in Settings. |
-| **Notion** | Creates a *Uni Study — Deadlines* database with course, type, weighting and status, matched on a hidden id so re-syncs update rather than duplicate. | An **internal integration** secret from [notion.so/my-integrations](https://www.notion.so/my-integrations), and the page you shared it with. (A “Connect to Notion” button would need a public OAuth app — overkill for a local tool.) |
+| **Notion** | **Two-way, into the databases you already keep.** See below. | An **internal integration** secret from [notion.so/my-integrations](https://www.notion.so/my-integrations), and the pages you shared it with. (A “Connect to Notion” button would need a public OAuth app — overkill for a local tool.) |
+
+### Notion, both ways
+
+Paste the integration secret and the app lists **every page and database Notion says it can
+see** — you pick from that list rather than hunting for a URL. Then map each course to a database,
+one per paper if that's how you work, with a direction per link.
+
+It writes into **your** tables, not one of its own. The columns are matched by meaning rather than by
+name, so a tracker with `Weighting` works and so does one with `Weight`, `Worth` or `%`; the same for
+`Raw Score` / `Mark` / `Grade`. If a column plainly isn't there it's left alone rather than guessed
+at — nothing gets written into a checkbox called `Excused` just because it was the only checkbox.
+When there's nothing to reuse, **Make one** creates a database laid out like the ones you already
+have. Study notes arrive as real Notion headings and bulleted lists, not a wall of markdown.
+
+The pull direction is the one that earns its keep: **Moodle often doesn't publish weightings**, and
+if you keep them in Notion the grade calculator can just read them. Anything you typed in Notion
+wins — pulling updates the app, and pushing never blanks a cell you filled in. Rows the app created
+carry a hidden `Uni ID` so a re-sync updates instead of duplicating; rows *you* made have no stamp and
+are never archived or overwritten.
 
 ### Flashcards, Quizlet and Anki
 
 Decks are generated from your own transcripts and slides, and reviewed in-app on a Leitner schedule
 (intervals 1 → 3 → 7 → 16 → 35 days; a miss drops you two boxes and returns in ten minutes).
+
+A sitting serves **60 cards**, however many are waiting. Every card in a new deck is due
+immediately, so a week of auto-generated decks can put two hundred cards "due" at once — and two
+hundred cards is not a study session, it's a wall. The backlog is shown honestly ("60 of 202 due");
+finishing offers you another sixty rather than sending you back to a list.
 
 **Quizlet retired its public write API in 2021**, so no app can create a set for you — importing is
 the supported path. *Copy for Quizlet* puts the deck on your clipboard in Quizlet's default import
@@ -111,11 +142,20 @@ npm-workspace monorepo:
 
 Data lives in `./data/` (SQLite, downloaded audio, transcripts, `materials/`) and is git-ignored.
 
-**On every launch**, in the background: Moodle sync → local search index → gradebook → course files
-→ push to Google/Notion → Echo360 recordings (transcribe, write notes, build a deck). Personal
-commitments are re-expanded into calendar events so the week view and heatmap are always current.
+**On launch, then every twenty minutes**, in the background: personal commitments → Moodle sync →
+gradebook → course files → search index → push to Google/Notion → Echo360 recordings → transcripts,
+notes and decks for anything still missing them. **Sync everything** in the sidebar runs the same
+pipeline on demand and shows which step it's on, so a run that's downloading a semester of slides is
+distinguishable from one that's stuck. Steps are independent — an expired Notion token doesn't cost
+you your lecture transcripts. The interval is in Settings, and a sync that was due while the machine
+slept runs as soon as it wakes.
 
 A few design notes worth knowing:
+
+- **The search index covers your course files, not just transcripts.** Slides and readings are the
+  half of a course that's never said out loud; leaving them out made the assistant blind to them.
+- **Answers cite what they were built from**, and each citation opens the lecture or slide. An
+  ungrounded claim about your own coursework is worse than no answer.
 
 - **Workload is measured in estimated hours**, because hours are what you run out of. A deadline
   costs a share of its weighting; classes and commitments cost their real duration.
@@ -126,8 +166,13 @@ A few design notes worth knowing:
 
 ## Notes & limitations
 
-- **Echo360** has no static API token, so you log in through the browser once; the session is then
-  persisted and reused.
+- **Echo360** has no static API token, so you log in through the browser once. Its cookies — including
+  the CloudFront signed set that authorises playback — carry no expiry date; they simply go stale if
+  the session sits idle, and are reissued on any authenticated request. So the app touches Echo360
+  every ten minutes and saves what comes back, which is what turns "log in again each week" into
+  "log in once". A login redirect is also no longer taken at face value: a slow single sign-on round
+  trip looks identical to an expired session for the first few seconds, so the saved session is only
+  given up after it has been refused repeatedly.
 - **Lecture videos hosted elsewhere** (e.g. SharePoint) can't be pulled automatically — use the
   **Upload recording** button on the Lectures page for those.
 - **Course files behind external links** (publisher sites, Google Drive) can't be downloaded — only

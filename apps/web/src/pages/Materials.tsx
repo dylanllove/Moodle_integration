@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, type Course, type Material } from "../api.js";
+import { useSyncedRefresh } from "../hooks.js";
 import { courseColor } from "../colors.js";
 import {
   Card,
@@ -25,26 +27,54 @@ const KIND_ICON: Record<string, string> = {
 };
 
 export function Materials() {
+  // Search and the assistant link straight to a file, a course's shelf, or a
+  // term — landing on an unfiltered list of 500 files would waste the trip.
+  const [params, setParams] = useSearchParams();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [root, setRoot] = useState("");
-  const [course, setCourse] = useState("");
-  const [query, setQuery] = useState("");
+  const [course, setCourse] = useState(params.get("course") ?? "");
+  const [query, setQuery] = useState(params.get("q") ?? "");
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [reading, setReading] = useState<{ title: string; text: string } | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     const [m, c] = await Promise.all([api.materials(), api.courses()]);
     setMaterials(m.materials);
     setRoot(m.root);
     setCourses(c);
-  }
+  }, []);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
-  }, []);
+  }, [load]);
+
+  useSyncedRefresh(load);
+
+  // ?open=<id> — a deep link straight into the file's extracted text.
+  const openId = params.get("open");
+  useEffect(() => {
+    if (!openId) return;
+    let cancelled = false;
+    api
+      .materialText(openId)
+      .then((r) => !cancelled && setReading(r))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [openId]);
+
+  /** Closing the reader drops ?open so a refresh doesn't reopen it. */
+  function closeReader() {
+    setReading(null);
+    if (params.has("open")) {
+      params.delete("open");
+      setParams(params, { replace: true });
+    }
+  }
 
   async function sync() {
     setSyncing(true);
@@ -204,7 +234,7 @@ export function Materials() {
         </div>
       )}
 
-      {reading && <TextPane title={reading.title} text={reading.text} onClose={() => setReading(null)} />}
+      {reading && <TextPane title={reading.title} text={reading.text} onClose={closeReader} />}
     </div>
   );
 }

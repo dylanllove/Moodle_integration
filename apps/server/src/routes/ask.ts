@@ -1,45 +1,113 @@
 import type { FastifyInstance } from "fastify";
 import { getDb } from "@uni/db";
-import { complete, hasApiKey, retrieve, MODEL_FAST } from "@uni/ai";
+import { complete, completeStream, hasApiKey, retrieve, MODEL_FAST } from "@uni/ai";
+import { describeSource, type SourceRef } from "../sources.js";
+
+interface AskBody {
+  question: string;
+  history?: { role: string; content: string }[];
+}
+
+/**
+ * Everything a single answer needs: the prompt, and the material it was built
+ * from. The sources travel with the answer so the student can open the lecture
+ * or slide it came from — an ungrounded claim about your own course is worse
+ * than no answer, and the only cure is showing the receipt.
+ */
+function buildAsk(body: AskBody): { prompt: string; system: string; sources: SourceRef[] } {
+  const question = body.question.trim();
+  const context = buildContext();
+  const chunks = retrieve(question, null, 6);
+  const contentBlock = chunks.length
+    ? chunks
+        .map((c, i) => {
+          const ref = describeSource(c.sourceType, c.sourceId);
+          const label = ref ? `${ref.courseCode ? `${ref.courseCode} · ` : ""}${ref.label}` : "course material";
+          return `[${i + 1}] (${label})\n${c.text}`;
+        })
+        .join("\n\n")
+    : "(no matching lecture/course content indexed yet)";
+
+  const seen = new Set<string>();
+  const sources: SourceRef[] = [];
+  for (const c of chunks) {
+    const ref = describeSource(c.sourceType, c.sourceId);
+    if (!ref) continue;
+    const key = ref.to ?? ref.href ?? ref.label;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sources.push(ref);
+  }
+
+  const history = (body.history ?? [])
+    .slice(-4)
+    .map((m) => `${m.role === "user" ? "Q" : "A"}: ${m.content}`)
+    .join("\n");
+
+  return {
+    prompt: `${history ? `Earlier in this chat:\n${history}\n\n` : ""}Question: ${question}`,
+    system:
+      "You are the student's study assistant and tutor, with access to their own university data below. " +
+      "Answer from this data. For **logistics** questions (deadlines, timetable, what's due, where/when a class is) be brief and direct. " +
+      "For **content/learning** questions (explain X, quiz me, what did the lecturer say about Y), teach clearly using COURSE CONTENT — explain in plain language, give examples, and offer to quiz them. " +
+      "Surface lecturer exam hints when relevant. Ground answers in the material; if it isn't there, say so and suggest a Sync.\n" +
+      "ATTENDANCE: lectures are recorded on Echo360 and generally OPTIONAL — never call a class compulsory just because it's timetabled or has a room; only if COURSE NOTES explicitly require attendance.\n\n" +
+      `=== STRUCTURE (courses, schedule, assignments) ===\n${context}\n\n` +
+      `=== COURSE CONTENT (relevant excerpts from lectures/slides/notes/announcements) ===\n${contentBlock}`,
+    sources,
+  };
+}
 
 export async function registerAskRoutes(app: FastifyInstance): Promise<void> {
-  app.post<{ Body: { question: string; history?: { role: string; content: string }[] } }>(
-    "/api/ai/ask",
-    async (req, reply) => {
-      if (!hasApiKey()) return reply.code(400).send({ error: "OPENAI_API_KEY is not set." });
-      const question = (req.body.question ?? "").trim();
-      if (!question) return reply.code(400).send({ error: "empty question" });
+  app.post<{ Body: AskBody }>("/api/ai/ask", async (req, reply) => {
+    if (!hasApiKey()) return reply.code(400).send({ error: "OPENAI_API_KEY is not set." });
+    if (!(req.body.question ?? "").trim()) return reply.code(400).send({ error: "empty question" });
 
-      const context = buildContext();
-      // Pull the most relevant lecture/slide/note content for this question.
-      const chunks = retrieve(question, null, 6);
-      const contentBlock = chunks.length
-        ? chunks.map((c, i) => `[${i + 1}] ${c.text}`).join("\n\n")
-        : "(no matching lecture/course content indexed yet)";
-      const history = (req.body.history ?? [])
-        .slice(-4)
-        .map((m) => `${m.role === "user" ? "Q" : "A"}: ${m.content}`)
-        .join("\n");
+    const { prompt, system, sources } = buildAsk(req.body);
+    const answer = await complete(prompt, {
+      system,
+      model: MODEL_FAST,
+      maxTokens: 900,
+      temperature: 0.3,
+    });
+    return { answer, sources };
+  });
 
-      const answer = await complete(
-        `${history ? `Earlier in this chat:\n${history}\n\n` : ""}Question: ${question}`,
-        {
-          system:
-            "You are the student's study assistant and tutor, with access to their own university data below. " +
-            "Answer from this data. For **logistics** questions (deadlines, timetable, what's due, where/when a class is) be brief and direct. " +
-            "For **content/learning** questions (explain X, quiz me, what did the lecturer say about Y), teach clearly using COURSE CONTENT — explain in plain language, give examples, and offer to quiz them. " +
-            "Surface lecturer exam hints when relevant. Ground answers in the material; if it isn't there, say so and suggest a Sync.\n" +
-            "ATTENDANCE: lectures are recorded on Echo360 and generally OPTIONAL — never call a class compulsory just because it's timetabled or has a room; only if COURSE NOTES explicitly require attendance.\n\n" +
-            `=== STRUCTURE (courses, schedule, assignments) ===\n${context}\n\n` +
-            `=== COURSE CONTENT (relevant excerpts from lectures/slides/notes/announcements) ===\n${contentBlock}`,
-          model: MODEL_FAST,
-          maxTokens: 900,
-          temperature: 0.3,
-        },
-      );
-      return { answer };
-    },
-  );
+  /**
+   * The same answer, streamed. Retrieval over a semester of slides and
+   * transcripts takes a moment and the model takes several more; watching the
+   * answer arrive is the difference between "thinking" and "broken".
+   */
+  app.post<{ Body: AskBody }>("/api/ai/ask/stream", async (req, reply) => {
+    if (!hasApiKey()) return reply.code(400).send({ error: "OPENAI_API_KEY is not set." });
+    if (!(req.body.question ?? "").trim()) return reply.code(400).send({ error: "empty question" });
+
+    reply.raw.writeHead(200, {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+    });
+    const send = (payload: unknown) => reply.raw.write(`data: ${JSON.stringify(payload)}\n\n`);
+
+    try {
+      const { prompt, system, sources } = buildAsk(req.body);
+      send({ type: "sources", sources });
+      for await (const delta of completeStream(prompt, {
+        system,
+        model: MODEL_FAST,
+        maxTokens: 900,
+        temperature: 0.3,
+      })) {
+        send({ type: "delta", text: delta });
+      }
+      send({ type: "done" });
+    } catch (e) {
+      send({ type: "error", message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      reply.raw.end();
+    }
+    return reply;
+  });
 }
 
 /** Compact, structured snapshot of the student's data for quick Q&A. */

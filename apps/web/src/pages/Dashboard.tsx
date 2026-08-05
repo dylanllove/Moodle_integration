@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, type CalEvent, type Course, type WeekLoad } from "../api.js";
+import { api, type CalEvent, type Course, type Deck, type Lecture, type WeekLoad } from "../api.js";
+import { useSyncedRefresh } from "../hooks.js";
 import {
   Card,
   PageHeader,
@@ -17,6 +18,8 @@ import { courseColor } from "../colors.js";
 
 /** How many deadlines the dashboard shows before deferring to the calendar. */
 const DEADLINE_LIMIT = 5;
+/** Must match the reviewer's own session size — see pages/Flashcards.tsx. */
+const SESSION_SIZE = 60;
 
 export function Dashboard() {
   const [events, setEvents] = useState<CalEvent[]>([]);
@@ -25,9 +28,11 @@ export function Dashboard() {
   const [thisWeek, setThisWeek] = useState<WeekLoad | null>(null);
   const [crunch, setCrunch] = useState<WeekLoad | null>(null);
   const [cardsDue, setCardsDue] = useState(0);
+  const [lectures, setLectures] = useState<Lecture[]>([]);
+  const [decks, setDecks] = useState<Deck[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     const now = new Date();
     const to = new Date(now.getTime() + 60 * 864e5);
     Promise.all([
@@ -52,9 +57,19 @@ export function Dashboard() {
       .catch(() => {});
     api
       .decks()
-      .then((d) => setCardsDue(d.decks.reduce((n, deck) => n + deck.due, 0)))
+      .then((d) => {
+        setDecks(d.decks);
+        setCardsDue(d.decks.reduce((n, deck) => n + deck.due, 0));
+      })
       .catch(() => {});
+    api.lectures().then(setLectures).catch(() => {});
   }, []);
+
+  useEffect(load, [load]);
+
+  // The launch sync usually finishes after this page has drawn — fill in
+  // rather than showing an empty dashboard until the student navigates away.
+  useSyncedRefresh(load);
 
   const courseCode = (id: string | null) => courses.find((c) => c.id === id)?.code ?? "General";
   const isToday = (iso: string) => {
@@ -134,10 +149,18 @@ export function Dashboard() {
               detail="deadlines & exams"
             />
             <StatCard
-              to="/flashcards"
+              to={cardsDue > 0 ? "/flashcards?review=all" : "/flashcards"}
               label="Cards due"
               value={String(cardsDue)}
-              detail={cardsDue > 0 ? "ready to review" : "all clear"}
+              // A backlog of hundreds is real, but the sitting it buys is not —
+              // say what you're actually committing to by clicking.
+              detail={
+                cardsDue > SESSION_SIZE
+                  ? `review ${SESSION_SIZE} now`
+                  : cardsDue > 0
+                    ? "start reviewing"
+                    : "all clear"
+              }
             />
           </div>
           {crunch && (
@@ -236,8 +259,88 @@ export function Dashboard() {
           })}
         </div>
       )}
+
+      <FreshMaterial lectures={lectures} decks={decks} courses={courses} />
       </div>
     </div>
+  );
+}
+
+/** How far back counts as "new" material worth putting on the front page. */
+const FRESH_DAYS = 10;
+const FRESH_LIMIT = 4;
+
+/**
+ * What the app has made for you since you last looked.
+ *
+ * Transcripts, study notes and flashcard decks now appear on their own, for
+ * every lecture and every slide deck — and none of it was visible from the
+ * dashboard, so the most valuable thing the app does was also the thing you had
+ * to go hunting for. Newest first, one click into the notes.
+ */
+function FreshMaterial({
+  lectures,
+  decks,
+  courses,
+}: {
+  lectures: Lecture[];
+  decks: Deck[];
+  courses: Course[];
+}) {
+  const cutoff = Date.now() - FRESH_DAYS * 864e5;
+  const fresh = lectures
+    .filter((l) => l.has_text && l.transcript_at)
+    .filter((l) => Date.parse(`${l.transcript_at}Z`) > cutoff)
+    .sort((a, b) => (b.transcript_at ?? "").localeCompare(a.transcript_at ?? ""))
+    .slice(0, FRESH_LIMIT);
+
+  if (fresh.length === 0) return null;
+
+  const codeOf = (id: string | null) => courses.find((c) => c.id === id)?.code ?? "General";
+  const deckFor = (lectureId: string) => decks.find((d) => d.lecture_id === lectureId) ?? null;
+
+  return (
+    <Reveal className="mt-8">
+      <PanelFrame
+        label="ready to study"
+        action={
+          <Link to="/lectures" className="text-xs font-medium text-accent-deep hover:underline">
+            All lectures →
+          </Link>
+        }
+      >
+        <div className="divide-y divide-hair">
+          {fresh.map((l) => {
+            const deck = deckFor(l.id);
+            return (
+              <div key={l.id} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
+                <span
+                  className="h-8 w-1 shrink-0 rounded-pill"
+                  style={{ background: courseColor(l.course_id) }}
+                />
+                <Link
+                  to={`/lectures?lecture=${encodeURIComponent(l.id)}`}
+                  className="min-w-0 flex-1 group"
+                >
+                  <div className="truncate text-sm font-medium text-ink group-hover:text-accent-deep">
+                    {l.title}
+                  </div>
+                  <div className="mt-0.5 text-xs text-ink-muted">
+                    {codeOf(l.course_id)}
+                    {l.has_notes ? " · study notes ready" : " · transcript ready"}
+                  </div>
+                </Link>
+                {deck && deck.due > 0 && (
+                  <Link to={`/flashcards?deck=${encodeURIComponent(deck.id)}`}>
+                    <Badge tone="accent">{deck.due} cards due</Badge>
+                  </Link>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </PanelFrame>
+    </Reveal>
   );
 }
 

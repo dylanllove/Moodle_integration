@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { getSetting } from "@uni/db";
+import { getSetting, setSetting } from "@uni/db";
 import { runDigest } from "./digest.js";
+import { runFullSync, syncRunning } from "./sync-job.js";
 
 /**
  * Weekly digest scheduler.
@@ -22,6 +23,105 @@ export function startScheduler(app: FastifyInstance): void {
   // A first check shortly after boot catches the "was off on Sunday" case.
   setTimeout(tick, 20_000).unref?.();
   setInterval(tick, TICK_MS).unref?.();
+  startAutoSync(app);
+}
+
+/* --- Continuous sync ------------------------------------------------------- */
+
+/** How often to pull everything again, unless the student changes it. */
+const DEFAULT_SYNC_MINUTES = 20;
+/** How often to touch Echo360 so its session cookies never go stale. */
+const KEEPALIVE_MS = 10 * 60_000;
+/**
+ * A tick this much later than scheduled means the machine was asleep. Waking to
+ * a stale app is the exact moment a re-sync is most useful, so don't wait out
+ * the rest of the interval.
+ */
+const SLEEP_GAP_MS = 3 * 60_000;
+
+let expectedAt: number | null = null;
+
+/** When the next automatic sync is due — null if auto-sync isn't running. */
+export function nextAutoSyncAt(): string | null {
+  return expectedAt == null ? null : new Date(expectedAt).toISOString();
+}
+
+export function autoSyncSettings(): { enabled: boolean; minutes: number; nextAt: string | null } {
+  return {
+    enabled: getSetting("auto_sync_enabled") !== "false",
+    minutes: syncIntervalMs() / 60_000,
+    nextAt: nextAutoSyncAt(),
+  };
+}
+
+/**
+ * Keep the app current while it's open.
+ *
+ * Syncing only at launch means a laptop that stays open all day — which is what
+ * a laptop does during a teaching day — shows you this morning's picture at 4pm.
+ * Deadlines move, lectures publish an hour after the class, announcements go up.
+ * This re-runs the same pipeline on a timer, skips its turn if a sync is already
+ * going, and treats waking from sleep as a reason to run now.
+ */
+export function startAutoSync(app: FastifyInstance): void {
+  expectedAt = Date.now() + syncIntervalMs();
+
+  const tick = async () => {
+    const now = Date.now();
+    const overslept = expectedAt != null && now - expectedAt > SLEEP_GAP_MS;
+    expectedAt = now + syncIntervalMs();
+    if (getSetting("auto_sync_enabled") === "false") return;
+    if (syncRunning()) return;
+    if (overslept) app.log.info("Auto-sync: catching up after the machine was asleep.");
+    try {
+      const state = await runFullSync(app);
+      setSetting("last_auto_sync", new Date().toISOString());
+      const failed = state.phases.filter((p) => p.status === "error").map((p) => p.key);
+      app.log.info(failed.length ? `Auto-sync done (failed: ${failed.join(", ")})` : "Auto-sync done");
+    } catch (e) {
+      app.log.warn(`Auto-sync: ${String(e)}`);
+    }
+  };
+
+  // Checked on a fixed short interval rather than scheduled at the full
+  // interval, so a machine that slept through its slot notices on waking.
+  const CHECK_MS = 60_000;
+  setInterval(() => {
+    if (expectedAt != null && Date.now() >= expectedAt - 1000) void tick();
+  }, CHECK_MS).unref?.();
+
+  startEchoKeepalive(app);
+}
+
+function syncIntervalMs(): number {
+  const raw = Number(getSetting("auto_sync_minutes"));
+  const minutes = Number.isFinite(raw) && raw >= 5 ? Math.min(raw, 24 * 60) : DEFAULT_SYNC_MINUTES;
+  return minutes * 60_000;
+}
+
+/**
+ * Echo360's cookies — including the CloudFront signed set that authorises
+ * playback — carry no expiry date. They're session cookies that go stale
+ * server-side once the session sits idle, and are reissued on any authenticated
+ * request. Touching the site every ten minutes and saving what comes back is
+ * what turns "log in each week" into "log in once".
+ */
+function startEchoKeepalive(app: FastifyInstance): void {
+  const ping = async () => {
+    if (syncRunning()) return; // a sync is already exercising the session
+    try {
+      const { echoConnected } = await import("@uni/lms");
+      if (!echoConnected()) return;
+      // Through the route so the health bookkeeping lives in exactly one place.
+      const res = await app.inject({ method: "POST", url: "/api/echo360/keepalive" });
+      const body = JSON.parse(res.body || "{}") as { ok?: boolean; reason?: string };
+      if (!body.ok) app.log.warn(`Echo360 keepalive: ${body.reason ?? "failed"}`);
+    } catch (e) {
+      app.log.warn(`Echo360 keepalive: ${String(e)}`);
+    }
+  };
+  setTimeout(() => void ping(), 90_000).unref?.();
+  setInterval(() => void ping(), KEEPALIVE_MS).unref?.();
 }
 
 async function maybeRun(app: FastifyInstance): Promise<void> {

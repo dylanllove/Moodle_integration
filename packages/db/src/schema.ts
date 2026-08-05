@@ -206,6 +206,26 @@ CREATE TABLE IF NOT EXISTS cards (
   created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Which Notion database each course syncs with, and in which direction.
+--
+-- One row per (course, kind) pair, so a student can keep a separate Notion
+-- destination per paper — which is how people actually organise a semester —
+-- rather than everything landing in one app-created table. course_id NULL means
+-- "everything not otherwise mapped", so a single shared database still works.
+CREATE TABLE IF NOT EXISTS notion_links (
+  id          TEXT PRIMARY KEY,
+  course_id   TEXT REFERENCES courses(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL,              -- assessments | notes
+  notion_id   TEXT NOT NULL,              -- the Notion database id
+  notion_url  TEXT,
+  title       TEXT,                       -- what it's called in Notion
+  direction   TEXT NOT NULL DEFAULT 'both', -- push | pull | both
+  last_push   TEXT,
+  last_pull   TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- One row per weekly digest we've built, so the scheduler never double-sends.
 CREATE TABLE IF NOT EXISTS digests (
   id          TEXT PRIMARY KEY,           -- ISO date of the week it covers
@@ -239,4 +259,6 @@ CREATE INDEX IF NOT EXISTS idx_assessments_group ON assessments(group_id);
 CREATE INDEX IF NOT EXISTS idx_groups_course ON assessment_groups(course_id);
 CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck_id, due_at);
 CREATE INDEX IF NOT EXISTS idx_decks_course ON decks(course_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_notion_links_target
+  ON notion_links(kind, IFNULL(course_id, ''));
 `;

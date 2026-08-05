@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   api,
   type AssessmentGroup,
@@ -24,23 +25,30 @@ import {
 } from "../ui.js";
 
 export function Grades() {
-  const [courses, setCourses] = useState<CourseGrades[]>([]);
+  // ?course= scopes the page to one course — search links here.
+  const [params, setParams] = useSearchParams();
+  const onlyCourse = params.get("course");
+  const [allCourses, setAllCourses] = useState<CourseGrades[]>([]);
   const [bands, setBands] = useState<GradeBand[]>([]);
   const [targets, setTargets] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     const r = await api.grades();
-    setCourses(r.courses);
+    setAllCourses(r.courses);
     setBands(r.bands);
     setTargets(r.targets);
-  }
+  }, []);
 
   useEffect(() => {
     load().finally(() => setLoading(false));
-  }, []);
+  }, [load]);
+
+  // An unrecognised id (a course with no gradebook yet) must not blank the page.
+  const scoped = onlyCourse && allCourses.some((c) => c.course_id === onlyCourse);
+  const courses = scoped ? allCourses.filter((c) => c.course_id === onlyCourse) : allCourses;
 
   async function syncGradebook() {
     setSyncing(true);
@@ -66,9 +74,22 @@ export function Grades() {
         title="Grades"
         subtitle="What you've banked, and exactly what you need on what's left"
         actions={
-          <Button variant="primary" onClick={syncGradebook} disabled={syncing}>
-            {syncing ? "Reading gradebook…" : "Pull from Moodle"}
-          </Button>
+          <>
+            {/* Arriving scoped from search shouldn't feel like the rest vanished. */}
+            {scoped && (
+              <Button
+                onClick={() => {
+                  params.delete("course");
+                  setParams(params, { replace: true });
+                }}
+              >
+                Show all courses
+              </Button>
+            )}
+            <Button variant="primary" onClick={syncGradebook} disabled={syncing}>
+              {syncing ? "Reading gradebook…" : "Pull from Moodle"}
+            </Button>
+          </>
         }
       />
 

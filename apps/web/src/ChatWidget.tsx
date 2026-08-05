@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState } from "react";
-import { api } from "./api.js";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { api, type AnswerSource } from "./api.js";
 import { Markdown } from "./Markdown.js";
 import { Button, Input } from "./ui.js";
 
 interface Msg {
   role: "user" | "assistant";
   content: string;
+  /** What the answer was built from — only ever set on assistant messages. */
+  sources?: AnswerSource[];
 }
 
 const SUGGESTIONS = [
@@ -21,6 +24,9 @@ export function ChatWidget() {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+  const busyRef = useRef(false);
+  const msgsRef = useRef<Msg[]>([]);
+  msgsRef.current = msgs;
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -34,22 +40,45 @@ export function ChatWidget() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
-  async function send(q: string) {
+  const send = useCallback(async (q: string) => {
     const question = q.trim();
-    if (!question || busy) return;
+    if (!question || busyRef.current) return;
+    busyRef.current = true;
     setInput("");
-    const history = msgs.map((m) => ({ role: m.role, content: m.content }));
-    setMsgs((m) => [...m, { role: "user", content: question }]);
+    const history = msgsRef.current.map((m) => ({ role: m.role, content: m.content }));
+    // The empty assistant message is the one the stream fills in.
+    setMsgs((m) => [...m, { role: "user", content: question }, { role: "assistant", content: "" }]);
     setBusy(true);
+
+    const patchLast = (fn: (m: Msg) => Msg) =>
+      setMsgs((all) => all.map((m, i) => (i === all.length - 1 ? fn(m) : m)));
+
     try {
-      const { answer } = await api.ask(question, history);
-      setMsgs((m) => [...m, { role: "assistant", content: answer }]);
+      await api.askStream(question, history, {
+        onSources: (sources) => patchLast((m) => ({ ...m, sources })),
+        onDelta: (text) => patchLast((m) => ({ ...m, content: m.content + text })),
+      });
+      // An empty answer is a failure that looks like success — say so.
+      patchLast((m) =>
+        m.content.trim() ? m : { ...m, content: "_No answer came back. Try asking again._" },
+      );
     } catch (e) {
-      setMsgs((m) => [...m, { role: "assistant", content: `Sorry — ${e}` }]);
+      patchLast((m) => ({ ...m, content: `Sorry — ${e instanceof Error ? e.message : e}` }));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
-  }
+  }, []);
+
+  // The command palette hands off here when a question is better than a search.
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      setOpen(true);
+      void send((e as CustomEvent<string>).detail);
+    };
+    window.addEventListener("uni:ask", onAsk);
+    return () => window.removeEventListener("uni:ask", onAsk);
+  }, [send]);
 
   return (
     <>
@@ -88,20 +117,29 @@ export function ChatWidget() {
                 ))}
               </div>
             )}
-            {msgs.map((m, i) => (
-              <div key={i} className={m.role === "user" ? "flex justify-end" : ""}>
-                <div
-                  className={`max-w-[85%] px-3.5 py-2.5 text-sm ${
-                    m.role === "user"
-                      ? "rounded-card rounded-br-md bg-accent-tint text-ink"
-                      : "rounded-card rounded-bl-md bg-chip text-ink-soft"
-                  }`}
-                >
-                  {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
+            {msgs.map((m, i) => {
+              // The last assistant message with nothing in it yet is the one
+              // currently being retrieved for — that's what Thinking marks.
+              if (m.role === "assistant" && !m.content) {
+                return <Thinking key={i} />;
+              }
+              return (
+                <div key={i} className={m.role === "user" ? "flex justify-end" : ""}>
+                  <div
+                    className={`max-w-[85%] px-3.5 py-2.5 text-sm ${
+                      m.role === "user"
+                        ? "rounded-card rounded-br-md bg-accent-tint text-ink"
+                        : "rounded-card rounded-bl-md bg-chip text-ink-soft"
+                    }`}
+                  >
+                    {m.role === "assistant" ? <Markdown>{m.content}</Markdown> : m.content}
+                    {m.role === "assistant" && m.sources && m.sources.length > 0 && (
+                      <Sources sources={m.sources} onNavigate={() => setOpen(false)} />
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-            {busy && <Thinking />}
+              );
+            })}
             <div ref={endRef} />
           </div>
 
@@ -124,6 +162,43 @@ export function ChatWidget() {
         </div>
       )}
     </>
+  );
+}
+
+/**
+ * The lectures and slides the answer was drawn from, each openable.
+ *
+ * "Your notes say X" is unverifiable; "COSC121 · Week 3 slides say X", with the
+ * slides one click away, is checkable — which is the only thing that makes an
+ * assistant over your own coursework worth trusting.
+ */
+function Sources({
+  sources,
+  onNavigate,
+}: {
+  sources: AnswerSource[];
+  onNavigate: () => void;
+}) {
+  const navigate = useNavigate();
+  return (
+    <div className="mt-2.5 flex flex-wrap gap-1 border-t border-hair pt-2">
+      {sources.slice(0, 4).map((s, i) => (
+        <button
+          key={i}
+          title={s.label}
+          onClick={() => {
+            if (s.to) {
+              onNavigate();
+              navigate(s.to);
+            } else if (s.href) window.open(s.href, "_blank", "noreferrer");
+          }}
+          className="max-w-full truncate rounded-pill bg-surface px-2 py-0.5 font-mono text-[10px] text-ink-muted transition duration-200 hover:text-accent-deep"
+        >
+          {s.courseCode ? `${s.courseCode} · ` : ""}
+          {s.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
