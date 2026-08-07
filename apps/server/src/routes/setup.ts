@@ -1,7 +1,10 @@
 import type { FastifyInstance } from "fastify";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { findMoodle } from "../moodle-find.js";
 import { notionConnected } from "../notion-links.js";
 import { spawn } from "node:child_process";
-import { getDb, getSetting, setSetting } from "@uni/db";
+import { getDb, getSetting, setSetting, dataDir } from "@uni/db";
 import { echoConnected, syncTimetable } from "@uni/lms";
 import { saveEnv } from "../env-file.js";
 
@@ -117,6 +120,23 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
       },
       digest: getSetting("digest_enabled") === "true",
     };
+  });
+
+  /**
+   * Find the student's Moodle from their university email.
+   *
+   * The first field of setup used to assume they knew their Moodle address. Most
+   * don't — they arrive from a bookmark or a portal tile — so this asks for the
+   * one thing every student does know and works backwards from the domain.
+   */
+  app.post<{ Body: { query?: string } }>("/api/setup/moodle/find", async (req, reply) => {
+    const query = (req.body?.query ?? "").trim();
+    if (!query) return reply.code(400).send({ error: "Enter your university email address." });
+    try {
+      return { ok: true, ...(await findMoodle(query)) };
+    } catch (e) {
+      return reply.code(400).send({ error: String(e instanceof Error ? e.message : e) });
+    }
   });
 
   /**
@@ -285,6 +305,48 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
       return { ok: true, classes };
     } catch (e) {
       return reply.code(400).send({ error: `Imported the file but couldn't read it: ${e}` });
+    }
+  });
+
+  /**
+   * Take the .ics as a file.
+   *
+   * Plenty of timetabling systems only offer "download", not a subscribe link —
+   * and the ones that do offer a link often hide it behind a login, so pasting it
+   * fetches a sign-in page instead of a calendar. A downloaded file always works,
+   * and asking someone to move it into the project folder by hand is the kind of
+   * step that ends an install.
+   *
+   * The trade-off is real and worth stating: a file is a snapshot, so if classes
+   * move you re-upload. A link keeps itself current.
+   */
+  app.post("/api/setup/timetable/upload", async (req, reply) => {
+    const file = await (req as unknown as { file: () => Promise<{ filename: string; toBuffer: () => Promise<Buffer> } | undefined> }).file();
+    if (!file) return reply.code(400).send({ error: "No file uploaded." });
+
+    const body = (await file.toBuffer()).toString("utf8");
+    if (!/BEGIN:VCALENDAR/i.test(body)) {
+      return reply.code(400).send({
+        error: `"${file.filename}" isn't a calendar file. Look for an Export or Download option offering iCal or .ics.`,
+      });
+    }
+
+    const dest = join(dataDir(), "timetable.ics");
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, body);
+    setSetting("timetable_url", dest);
+
+    try {
+      const { classes } = await syncTimetable();
+      if (classes === 0) {
+        return reply.code(400).send({
+          error:
+            "That file parsed but had no classes in it — it may be an empty export, or cover a period that's already finished.",
+        });
+      }
+      return { ok: true, classes, filename: file.filename, snapshot: true };
+    } catch (e) {
+      return reply.code(400).send({ error: `Saved the file but couldn't read it: ${e}` });
     }
   });
 }

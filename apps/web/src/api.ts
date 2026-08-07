@@ -591,6 +591,13 @@ export const api = {
 
   // First-run setup
   setupStatus: () => req<SetupStatus>("/setup/status"),
+  setupMoodleFind: (query: string) =>
+    req<{
+      ok: boolean;
+      domain: string | null;
+      advice: string | null;
+      sites: { url: string; name: string | null; webServices: boolean; note: string | null }[];
+    }>("/setup/moodle/find", { method: "POST", body: JSON.stringify({ query }) }),
   setupMoodleLogin: (url: string, username: string, password: string) =>
     req<MoodleOk>("/setup/moodle/login", {
       method: "POST",

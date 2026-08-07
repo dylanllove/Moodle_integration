@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type SetupStatus } from "../api.js";
 import {
@@ -263,6 +263,98 @@ const METHODS = [
   { key: "token" as const, label: "Paste a token" },
 ];
 
+/**
+ * Find it for them.
+ *
+ * "Your Moodle address" assumes the student has ever looked at it, and most
+ * haven't — they arrive from a bookmark or a portal tile and the hostname is
+ * something nobody memorises. Being stuck on the first field of setup is the
+ * worst place to be stuck, so this asks for the one thing every student knows
+ * and goes looking.
+ */
+function MoodleFinder({ onPick }: { onPick: (url: string) => void }) {
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<Awaited<ReturnType<typeof api.setupMoodleFind>> | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function find() {
+    setBusy(true);
+    setErr(null);
+    setResult(null);
+    try {
+      setResult(await api.setupMoodleFind(email.trim()));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-5 rounded-field border border-hair bg-chip/40 p-4">
+      <div className="mb-1 text-[13px] font-medium text-ink">Don't know your Moodle address?</div>
+      <p className="mb-3 text-[12px] leading-relaxed text-ink-muted">
+        Type your university email and it'll go and look. Nothing is sent anywhere except your own
+        university's servers.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <div className="min-w-[15rem] flex-1">
+          <Input
+            density="sm"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && email.trim() && !busy && find()}
+            placeholder="you@student.your-uni.ac.nz"
+            aria-label="Your university email address"
+          />
+        </div>
+        <Button size="sm" onClick={find} disabled={!email.trim() || busy}>
+          {busy ? "Looking…" : "Find it"}
+        </Button>
+      </div>
+
+      {err && <p className="mt-2 text-[12px] text-rose-700">{err}</p>}
+
+      {result && result.sites.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          {result.sites.map((site) => (
+            <button
+              key={site.url}
+              onClick={() => onPick(site.url)}
+              className="flex w-full items-start gap-2.5 rounded-field border border-hair bg-surface px-3 py-2.5 text-left transition duration-200 hover:border-accent-deep"
+            >
+              <span className="mt-0.5 text-sm" aria-hidden="true">
+                {site.webServices ? "✓" : "!"}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[13px] font-medium text-ink">
+                  {site.name ?? site.url.replace(/^https?:\/\//, "")}
+                </span>
+                <span className="block truncate font-mono text-[11px] text-ink-muted">
+                  {site.url}
+                </span>
+                {/* The thing that actually decides whether this app can work,
+                    said here rather than discovered three steps later. */}
+                {site.note && (
+                  <span className="mt-1 block text-[12px] leading-snug text-amber-800">
+                    {site.note}
+                  </span>
+                )}
+              </span>
+              <span className="shrink-0 text-[12px] font-medium text-accent-deep">Use this</span>
+            </button>
+          ))}
+        </div>
+      )}
+
+      {result && result.sites.length === 0 && result.advice && (
+        <p className="mt-2 text-[12px] leading-relaxed text-ink-muted">{result.advice}</p>
+      )}
+    </div>
+  );
+}
+
 function MoodleConnect({ initialUrl, onDone }: { initialUrl: string; onDone: () => void }) {
   const [method, setMethod] = useState<"signin" | "token">("signin");
   const [url, setUrl] = useState(initialUrl);
@@ -294,7 +386,12 @@ function MoodleConnect({ initialUrl, onDone }: { initialUrl: string; onDone: () 
 
   return (
     <div>
-      <Field label="Your Moodle address" hint="The page you normally log in to.">
+      <MoodleFinder onPick={setUrl} />
+
+      <Field
+        label="Your Moodle address"
+        hint="Or paste any page from it — a course, the dashboard, the login screen."
+      >
         <Input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
@@ -505,6 +602,71 @@ function OpenAiKey({ onDone }: { onDone: () => void }) {
   );
 }
 
+/**
+ * The file path.
+ *
+ * Some timetabling systems only offer a download, and some "subscribe" links sit
+ * behind a login, so pasting one fetches a sign-in page instead of a calendar.
+ * Either way the student ends up holding a .ics with nowhere to put it — the
+ * previous answer was "drop it in the repo folder", which is not a thing most
+ * people will do.
+ */
+function TimetableUpload({ onDone }: { onDone: () => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function upload(file: File) {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/setup/timetable/upload", { method: "POST", body: fd });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? `Upload failed (${res.status})`);
+      setMsg({
+        ok: true,
+        text: `Imported ${json.classes} classes from ${json.filename}. A file is a snapshot, so re-upload it if your classes change.`,
+      });
+      onDone();
+    } catch (e) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-4">
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".ics,text/calendar"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void upload(f);
+          e.target.value = "";
+        }}
+      />
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[13px] text-ink-muted">Only offered a download?</span>
+        <Button size="sm" onClick={() => fileRef.current?.click()} disabled={busy}>
+          {busy ? "Reading…" : "Upload a .ics file"}
+        </Button>
+      </div>
+      {msg && (
+        <p
+          className={`mt-2 text-[12px] leading-relaxed ${msg.ok ? "text-ink-muted" : "text-rose-700"}`}
+        >
+          {msg.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function Timetable({ initialUrl, onDone }: { initialUrl: string; onDone: () => void }) {
   const [url, setUrl] = useState(initialUrl);
   const [busy, setBusy] = useState(false);
@@ -543,13 +705,29 @@ function Timetable({ initialUrl, onDone }: { initialUrl: string; onDone: () => v
         />
       </Field>
 
+      <TimetableUpload onDone={onDone} />
+
       <Details summary="Where do I find that link?" className="mt-4">
-        On your university's timetable site, look for <span className="text-ink">Export</span>,{" "}
-        <span className="text-ink">Subscribe</span>, <span className="text-ink">Add to calendar</span>{" "}
-        or an <span className="text-ink">iCal / .ics</span> option — usually near the top of your
-        weekly view. Copy the link it gives you rather than downloading the file. If you only have a
-        downloaded <Chip>.ics</Chip> file, drop it in the repo folder and it'll be picked up
-        automatically. A link is better: it re-syncs when your classes change.
+        <div className="space-y-2">
+          <p>
+            On your timetable site, look for <span className="text-ink">Export</span>,{" "}
+            <span className="text-ink">Subscribe</span>,{" "}
+            <span className="text-ink">Add to calendar</span> or an{" "}
+            <span className="text-ink">iCal / .ics</span> option — usually near the top of the week
+            view.
+          </p>
+          <p>
+            If yours is <span className="text-ink">MyTimetable</span> or{" "}
+            <span className="text-ink">Allocate+</span>, it's behind the calendar icon.{" "}
+            <span className="text-ink">Celcat</span> and <span className="text-ink">TimeEdit</span>{" "}
+            use a “Subscribe” button. <span className="text-ink">Syllabus+</span> often only offers a
+            download — use <span className="text-ink">Upload a .ics file</span> above for that.
+          </p>
+          <p>
+            A link beats a file because it re-syncs when your classes move. But a link that needs a
+            login won't work from here — if pasting it returns a web page, download the file instead.
+          </p>
+        </div>
       </Details>
 
       {err && <Notice tone="error" className="mt-4">{err}</Notice>}
