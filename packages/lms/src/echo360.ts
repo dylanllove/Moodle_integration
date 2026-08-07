@@ -151,20 +151,46 @@ export async function persistEchoSession(ctx: BrowserContext): Promise<void> {
 }
 
 /**
- * Get a context to run Echo operations. Prefers the live login window; otherwise
- * builds a headless context from the saved session. `done()` cleans up.
+ * Get a context to run Echo operations.
+ *
+ * The saved session is *always* preferred, because it runs headless. This used to
+ * hand back the live login window whenever one existed, which meant that once
+ * you'd connected Echo360 the window stayed open and every later sync drove it —
+ * opening a tab per lecture, playing video, on top of whatever you were doing.
+ * Background work should be invisible; the only reason to show a browser is to
+ * let someone type a password into it.
+ *
+ * The live window remains the fallback for the moment between logging in and the
+ * session being saved, when it's the only thing authenticated.
  */
 export async function acquireEchoContext(): Promise<{
   ctx: BrowserContext;
   done: () => Promise<void>;
   live: boolean;
 }> {
+  if (echoHasSession()) {
+    const browser = await chromium.launch({ headless: true, args: HEADLESS_ARGS });
+    const ctx = await browser.newContext({ storageState: STATE_FILE() });
+    return { ctx, done: async () => void (await browser.close().catch(() => {})), live: false };
+  }
   if (loginCtx) return { ctx: loginCtx, done: async () => {}, live: true };
-  if (!echoHasSession()) throw new Error("Not connected to Echo360.");
-  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
-  const ctx = await browser.newContext({ storageState: STATE_FILE() });
-  return { ctx, done: async () => void (await browser.close().catch(() => {})), live: false };
+  throw new Error("Not connected to Echo360.");
 }
+
+/**
+ * Keep the headless browser out of sight and out of the way. Media playback is
+ * only ever sniffed for its stream URL, so there's nothing to render and no
+ * reason to let it take focus or spin up a GPU.
+ */
+const HEADLESS_ARGS = [
+  "--no-sandbox",
+  "--disable-gpu",
+  "--mute-audio",
+  "--no-first-run",
+  "--no-default-browser-check",
+  "--disable-background-timer-throttling",
+  "--disable-renderer-backgrounding",
+];
 
 /**
  * Open a real browser window at Echo360 for login; returns immediately. The user
@@ -196,7 +222,14 @@ export async function echoVerify(): Promise<{ connected: boolean; error?: string
     const page = loginCtx.pages()[0] ?? (await loginCtx.newPage());
     await page.goto(`${ORIGIN}/`, { waitUntil: "networkidle", timeout: 30000 }).catch(() => {});
     const ok = !/login\.echo360|\/login/i.test(page.url());
-    if (ok) await persistEchoSession(loginCtx);
+    if (ok) {
+      await persistEchoSession(loginCtx);
+      // The window has done its one job. Leaving it open is what made every
+      // later sync visible, and there's nothing else for the student to do in it.
+      const finished = loginCtx;
+      loginCtx = null;
+      await finished.close().catch(() => {});
+    }
     return { connected: ok, error: ok ? undefined : "Not logged in yet — finish logging in, then try again." };
   } catch (e) {
     return { connected: false, error: String(e) };

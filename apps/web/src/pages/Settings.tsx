@@ -751,7 +751,7 @@ function Echo360Card() {
       const r = await api.echoLogin();
       setMsg(
         r.ok
-          ? "A browser window opened — log in to Echo360, then click “I've connected” to save your session (you can close the window after)."
+          ? "A browser window opened — log in to Echo360, then click “I've connected”. The window closes itself once the session is saved, and everything after that runs out of sight."
           : `Couldn't open the login window: ${r.error}`,
       );
     } catch (e) {
@@ -843,10 +843,11 @@ function Echo360Card() {
         Echo360 lecture recordings
       </SectionTitle>
       <p className="mb-5 text-[13px] leading-relaxed text-ink-muted">
-        Log in <strong className="font-semibold text-ink">once</strong>. Echo360's cookies carry no
-        expiry date — they simply go stale if the session sits idle — so the app touches Echo360
-        every ten minutes and saves the refreshed session. New recordings transcribe on their own,
-        and each one gets study notes and a flashcard deck.
+        Log in <strong className="font-semibold text-ink">once</strong>, in a window that closes
+        itself. Everything afterwards runs headless — downloading and transcribing never puts a
+        browser on your screen. Echo360's cookies carry no expiry date and simply go stale if the
+        session sits idle, so the app touches Echo360 every ten minutes and saves the refreshed
+        session. New recordings transcribe on their own, and each gets study notes and a deck.
         {session?.lastWarm && (
           <> Session last confirmed {new Date(session.lastWarm).toLocaleString()}.</>
         )}
