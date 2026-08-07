@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { getDb } from "@uni/db";
 import {
   hasApiKey,
+  localStatus,
   summariseLecture,
   transcriptToNotes,
   explain,
@@ -16,13 +17,31 @@ import {
 export async function registerAiRoutes(app: FastifyInstance): Promise<void> {
   const db = getDb();
 
-  // Guard: fail fast with a clear message if no API key is configured.
-  // reindex is pure local lexical indexing and needs no key, so it's exempt.
+  /**
+   * Fail fast, but only where a model is genuinely needed.
+   *
+   * This used to demand an OpenAI key for everything under /api/ai/. Two things
+   * are wrong with that now: a local model is a complete substitute, so a key is
+   * no longer what "can we do AI" means; and it was also blocking the cost and
+   * provider endpoints — which is to say, a new user with no key was refused
+   * access to the one page that explains they don't need one.
+   */
+  const EXEMPT = [
+    "/api/ai/reindex", // pure local lexical indexing
+    "/api/ai/status",
+    "/api/ai/options",
+    "/api/ai/probe-local",
+    "/api/ai/cache",
+  ];
   app.addHook("preHandler", async (req, reply) => {
-    const needsKey = req.url.startsWith("/api/ai/") && !req.url.startsWith("/api/ai/reindex");
-    if (needsKey && !hasApiKey()) {
-      reply.code(400).send({ error: "OPENAI_API_KEY is not set. Add it to your .env file." });
-    }
+    if (!req.url.startsWith("/api/ai/")) return;
+    if (EXEMPT.some((p) => req.url.startsWith(p))) return;
+    if (hasApiKey()) return;
+    if ((await localStatus()).ok) return;
+    reply.code(400).send({
+      error:
+        "No model available: add an OpenAI key in setup, or install a local one (ollama pull llama3.1:8b) to run this for free.",
+    });
   });
 
   app.post<{ Body: { lecture_id: string; mode?: "summary" | "notes" } }>(

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { getDb } from "@uni/db";
-import { complete, completeStream, hasApiKey, retrieve, MODEL_FAST } from "@uni/ai";
+import { complete, completeStream, hasApiKey, localStatus, retrieve } from "@uni/ai";
 import { describeSource, type SourceRef } from "../sources.js";
 
 interface AskBody {
@@ -60,7 +60,13 @@ function buildAsk(body: AskBody): { prompt: string; system: string; sources: Sou
 
 export async function registerAskRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: AskBody }>("/api/ai/ask", async (req, reply) => {
-    if (!hasApiKey()) return reply.code(400).send({ error: "OPENAI_API_KEY is not set." });
+    // A local model is a complete substitute for a key here.
+    if (!hasApiKey() && !(await localStatus()).ok) {
+      return reply.code(400).send({
+        error:
+          "No model available: add an OpenAI key in setup, or install a local one to run this for free.",
+      });
+    }
     if (!(req.body.question ?? "").trim()) return reply.code(400).send({ error: "empty question" });
 
     const { prompt, system, sources } = buildAsk(req.body);
@@ -80,7 +86,12 @@ export async function registerAskRoutes(app: FastifyInstance): Promise<void> {
    * answer arrive is the difference between "thinking" and "broken".
    */
   app.post<{ Body: AskBody }>("/api/ai/ask/stream", async (req, reply) => {
-    if (!hasApiKey()) return reply.code(400).send({ error: "OPENAI_API_KEY is not set." });
+    if (!hasApiKey() && !(await localStatus()).ok) {
+      return reply.code(400).send({
+        error:
+          "No model available: add an OpenAI key in setup, or install a local one to run this for free.",
+      });
+    }
     if (!(req.body.question ?? "").trim()) return reply.code(400).send({ error: "empty question" });
 
     reply.raw.writeHead(200, {
