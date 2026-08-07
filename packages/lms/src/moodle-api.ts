@@ -89,9 +89,11 @@ export async function syncMoodleApi(): Promise<MoodleSyncCounts> {
   // Only sync detail (assignments/lectures) for ACTIVE courses — keeps things
   // focused on what the student is currently taking.
   const activeIds = new Set(
-    (db.prepare("SELECT id FROM courses WHERE active = 1").all() as { id: string }[]).map(
-      (r) => r.id,
-    ),
+    (
+      db
+        .prepare("SELECT id FROM courses WHERE active = 1 AND excluded = 0")
+        .all() as { id: string }[]
+    ).map((r) => r.id),
   );
   const teachingCourses = allCourses.filter((c) => activeIds.has(`moodle:course:${c.id}`));
 

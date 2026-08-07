@@ -60,6 +60,15 @@ function migrate(db: DatabaseSync): void {
   // When a card was first shown. Without it there's no way to introduce new cards
   // at a sane rate, and a semester of auto-generated decks all falls due at once.
   add("cards", "introduced_at", "TEXT");
+  // Per-course control over what actually gets pulled down. "active" answers
+  // "am I taking this?", which is a different question from "do I want a
+  // semester of its slide decks on my disk" — a course can matter for its
+  // deadlines while its recordings are of no interest at all.
+  add("courses", "sync_materials", "INTEGER NOT NULL DEFAULT 1");
+  add("courses", "sync_lectures", "INTEGER NOT NULL DEFAULT 1");
+  // Enrolments that aren't courses — notice boards, cohort groups, the library's
+  // induction — come back on every sync, so ignoring one has to be remembered.
+  add("courses", "excluded", "INTEGER NOT NULL DEFAULT 0");
 }
 
 /** Simple key/value settings helpers. */

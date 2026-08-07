@@ -28,6 +28,16 @@ function niceEchoTitle(raw: string, start: string | null): string {
   return `${name} · ${d}`;
 }
 
+/** Does this course want its recordings pulled down at all? */
+function wantsLectures(courseId: string): boolean {
+  const row = getDb()
+    .prepare("SELECT excluded, sync_lectures FROM courses WHERE id = ?")
+    .get(courseId) as { excluded: number; sync_lectures: number } | undefined;
+  // A section mapped to nothing we know about is left alone rather than dropped.
+  if (!row) return true;
+  return row.excluded === 0 && row.sync_lectures === 1;
+}
+
 function sections(): Section[] {
   try {
     return JSON.parse(getSetting("echo360_sections") ?? "[]");
@@ -144,7 +154,7 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
         .code(400)
         .send({ error: "Not connected to Echo360 — click Connect Echo360 and log in once." });
 
-    const counts = { lessons: 0, sections: 0, failed: 0 };
+    const counts = { lessons: 0, sections: 0, failed: 0, skipped: 0 };
     let expired = false;
 
     const discovery = await withEchoLock(async () => {
@@ -153,6 +163,12 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
       const { ctx, done: cleanup } = acquired;
       try {
         for (const sec of secs) {
+          // A section mapped to a course the student has switched off, or
+          // deleted, is skipped before any network work happens.
+          if (sec.courseId && !wantsLectures(sec.courseId)) {
+            counts.skipped++;
+            continue;
+          }
           let lessons;
           try {
             lessons = await listLessons(ctx, sec.sectionId);

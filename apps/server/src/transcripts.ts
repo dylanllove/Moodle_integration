@@ -79,13 +79,18 @@ export async function backfillTranscripts(app: FastifyInstance): Promise<Backfil
     noted: 0,
   };
 
+  // Only courses the student actually wants pulled down. Transcribing an hour of
+  // audio for a notice board they'll never read is the most expensive way for
+  // this app to waste their money.
   const rows = db
     .prepare(
       `SELECT l.id, l.course_id, l.title, l.provider, l.url, l.media_url, l.media_path,
               l.recorded_at, t.status, t.updated_at
          FROM lectures l
          LEFT JOIN transcripts t ON t.lecture_id = l.id
-        WHERE t.status IS NULL OR t.status <> 'done' 
+         LEFT JOIN courses c ON c.id = l.course_id
+        WHERE (t.status IS NULL OR t.status <> 'done')
+          AND (l.course_id IS NULL OR (c.excluded = 0 AND c.sync_lectures = 1))
         ORDER BY l.recorded_at IS NULL, l.recorded_at DESC`,
     )
     .all() as unknown as LectureRow[];

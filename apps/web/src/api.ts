@@ -9,6 +9,17 @@ export interface Course {
   active_override?: number | null;
   start_date?: string | null;
   end_date?: string | null;
+  /** Pull this course's slides and readings down. */
+  sync_materials?: number;
+  /** Pull and transcribe its recordings. */
+  sync_lectures?: number;
+  excluded?: number;
+  /** What it's currently costing, so removing it is an informed choice. */
+  files?: number;
+  bytes?: number;
+  lectures?: number;
+  transcribed?: number;
+  cards?: number;
 }
 
 export interface Assignment {
@@ -630,6 +641,20 @@ export const api = {
   saveSettings: (body: Record<string, string>) =>
     req<{ ok: boolean }>("/settings", { method: "PUT", body: JSON.stringify(body) }),
   courses: (all = false) => req<Course[]>(`/courses${all ? "?all=1" : ""}`),
+  setCourseSync: (id: string, body: { materials?: boolean; lectures?: boolean }) =>
+    req<Course>(`/courses/${encodeURIComponent(id)}/sync`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteCourse: (id: string) =>
+    req<{ ok: boolean; course: string; filesRemoved: number; lecturesRemoved: number }>(
+      `/courses/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
+  restoreCourse: (id: string) =>
+    req<{ ok: boolean }>(`/courses/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+  excludedCourses: () =>
+    req<{ id: string; code: string | null; name: string }[]>("/courses/excluded"),
   setCourseActive: (id: string, active: boolean | null) =>
     req<Course>(`/courses/${id}/active`, { method: "PUT", body: JSON.stringify({ active }) }),
   sync: () => req<{ ok: boolean; error?: string; counts?: Record<string, number> }>("/lms/sync", { method: "POST" }),

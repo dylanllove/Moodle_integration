@@ -65,7 +65,11 @@ export async function syncMaterials(opts: {
   const courses = (
     opts.courseId
       ? db.prepare("SELECT id, code, name, start_date FROM courses WHERE id = ?").all(opts.courseId)
-      : db.prepare("SELECT id, code, name, start_date FROM courses WHERE active = 1").all()
+      : db
+          .prepare(
+            "SELECT id, code, name, start_date FROM courses WHERE active = 1 AND excluded = 0 AND sync_materials = 1",
+          )
+          .all()
   ) as { id: string; code: string | null; name: string; start_date: string | null }[];
 
   for (const course of courses) {
