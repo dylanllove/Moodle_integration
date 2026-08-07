@@ -3,6 +3,10 @@
 A **local, open-source** study manager that plugs into your university's Moodle/Learn and
 Echo360, then does the boring parts for you:
 
+-  **Tells you what to do today** — a ranked plan with the reason for each line
+  ("due tomorrow · worth 4%", "139 waiting · next assessment in 1 day"), sized in
+  minutes. It's arithmetic over your own data, so you can argue with it — and it
+  works with the AI switched off entirely.
 -  **Syncs your Moodle** — active courses, assignments (with briefs), deadlines & opening dates.
 -  **Deadlines everywhere you look** — pushes them to **Google Calendar**, **Notion**, and any
   calendar app (Apple Calendar, Outlook) via a subscribable feed with real alarms.
@@ -12,6 +16,8 @@ Echo360, then does the boring parts for you:
   your life outside class*, and shows which weeks are about to get brutal.
 -  **Grade calculator** — pulls weightings and marks from the Moodle gradebook and answers
   *"what do I need on the final to get an A?"* — flagging targets that have slipped out of reach.
+  Where the gradebook publishes no weightings, it **reads them out of the course outline PDF**
+  it already downloaded, rather than asking you to type them in.
 -  **Every course file, filed by week** — downloads all slides, readings and handouts into
   `data/materials/<COURSE>/Week 03/…` and extracts the text for study use.
 -  **Auto-transcribes lectures** — logs into Echo360 **once**, then keeps the session alive itself.
@@ -21,7 +27,9 @@ Echo360, then does the boring parts for you:
 -  **Stays current while it's open** — the whole pipeline re-runs every twenty minutes (and right
   after the laptop wakes), so a day-old app is never what you're looking at.
 -  **Flashcards that make themselves** — a deck per lecture, plus decks from any course file, with
-  an in-app spaced-repetition reviewer and one-click **Quizlet** / **Anki** export.
+  an in-app spaced-repetition reviewer and one-click **Quizlet** / **Anki** export. New cards
+  arrive at a daily rate and speed up as a test approaches, so a semester of decks is a habit
+  rather than a wall of four hundred.
 -  **Sunday-night digest** — one email: what's due, how heavy the week looks, what's new, cards
   waiting, grades at risk.
 -  **AI cheat sheets** — aggregates slides + transcripts + forum posts + briefs into an
@@ -33,17 +41,27 @@ Echo360, then does the boring parts for you:
 -  **Chat** — quick questions across your courses ("what's due this week?", "where's my next lab?"),
   streamed as they're written and footnoted with the lecture or slide each answer came from.
 
+-  **Costs what you let it** — every model call goes through one gateway that can run the work on
+  your own machine for free (Ollama for text, whisper.cpp for lecture audio), caches answers it has
+  already paid for, itemises the spend, and stops at a budget you set.
+
 Everything runs **on your machine**. Your data, credentials, lecture audio and notes never leave it
-except to talk directly to Moodle, Echo360, OpenAI and whichever of Google/Notion/your mail provider
-you choose to connect.
+except to talk directly to Moodle, Echo360, and whichever of OpenAI/Google/Notion/your mail provider
+you choose to connect — and with a local model installed, the AI half never leaves it either.
 
 ---
 
 ## Quick start
 
-**Prerequisites:** [Node.js](https://nodejs.org) ≥ 20 and [ffmpeg](https://ffmpeg.org)
-(`brew install ffmpeg` / `apt install ffmpeg`). You'll also want an
-[OpenAI API key](https://platform.openai.com/api-keys) — the app will ask for it.
+**Prerequisites**
+
+- **[Node.js](https://nodejs.org) 24 or newer.** Everything is stored in Node's built-in SQLite,
+  which doesn't exist before 23.4 — the app checks on startup and tells you rather than failing
+  with a missing-module error.
+- **[ffmpeg](https://ffmpeg.org)** — `brew install ffmpeg` / `apt install ffmpeg`.
+- **An AI backend**, either of:
+  - an [OpenAI API key](https://platform.openai.com/api-keys) — the app asks for it in setup; or
+  - nothing at all, if you'd rather run it locally and free (see *Running it for free* below).
 
 ```bash
 git clone https://github.com/dylanllove/Moodle_integration.git
@@ -100,6 +118,21 @@ wins — pulling updates the app, and pushing never blanks a cell you filled in.
 carry a hidden `Uni ID` so a re-sync updates instead of duplicating; rows *you* made have no stamp and
 are never archived or overwritten.
 
+### Running it for free
+
+Two things cost money: transcribing lecture audio, and generating text. Both run on your own
+machine, and **audio is the one worth doing** — it's about `$0.006`/minute through OpenAI, so a
+semester of recordings adds up, while text is cents.
+
+```bash
+brew install whisper-cpp     # lecture transcription — the big saving
+ollama pull llama3.1:8b      # notes, flashcards, chat  (https://ollama.com)
+```
+
+The app finds both on its own. **Settings → AI cost** shows what's been spent and on what, lets you
+force either half local, and takes a monthly cap that pauses paid calls when reached. With no OpenAI
+key at all it still runs, using whatever is installed locally.
+
 ### Flashcards, Quizlet and Anki
 
 Decks are generated from your own transcripts and slides, and reviewed in-app on a Leitner schedule
@@ -151,6 +184,9 @@ you your lecture transcripts. The interval is in Settings, and a sync that was d
 slept runs as soon as it wakes.
 
 A few design notes worth knowing:
+
+- **The daily plan is deliberately not a model.** A plan you can't interrogate is one you won't
+  trust at 9am, so every line traces to a number — and it keeps working when the AI doesn't.
 
 - **The search index covers your course files, not just transcripts.** Slides and readings are the
   half of a course that's never said out loud; leaving them out made the assistant blind to them.

@@ -708,7 +708,7 @@ function TimetableCard() {
         <Input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://mytimetable.canterbury.ac.nz/…/timetable.ics"
+          placeholder="https://mytimetable.your-uni.ac.nz/…/timetable.ics"
           aria-label="Timetable iCal URL"
         />
         <Button variant="primary" onClick={saveAndSync} disabled={busy || !url.trim()} className="shrink-0">

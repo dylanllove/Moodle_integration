@@ -298,7 +298,7 @@ function MoodleConnect({ initialUrl, onDone }: { initialUrl: string; onDone: () 
         <Input
           value={url}
           onChange={(e) => setUrl(e.target.value)}
-          placeholder="learn.canterbury.ac.nz"
+          placeholder="learn.your-uni.ac.nz"
           aria-label="Moodle address"
         />
       </Field>
