@@ -1,5 +1,5 @@
 import { getDb } from "@uni/db";
-import type { ChunkSource } from "@uni/ai";
+import { clock, type ChunkSource } from "@uni/ai";
 
 /**
  * Where a retrieved chunk actually came from, in terms the student recognises.
@@ -17,6 +17,8 @@ export interface SourceRef {
   courseCode: string | null;
   /** In-app destination, deep-linked to the item where a page supports it. */
   to: string | null;
+  /** Seconds into the lecture recording this came from, when known. */
+  atSec: number | null;
   /** External destination (a Moodle page) when there's no in-app view. */
   href: string | null;
 }
@@ -40,7 +42,16 @@ export function resetSourceCache(): void {
   courseCache.clear();
 }
 
-export function describeSource(sourceType: ChunkSource, sourceId: string): SourceRef | null {
+/**
+ * `at` is where in the source the chunk sits: seconds into a recording, or a
+ * slide number for a deck — the label says which ("Lecture 4 · 14:37",
+ * "Week 3 slides · slide 6") and the link opens it there.
+ */
+export function describeSource(
+  sourceType: ChunkSource,
+  sourceId: string,
+  at: number | null = null,
+): SourceRef | null {
   const db = getDb();
 
   if (sourceType === "note") {
@@ -55,6 +66,7 @@ export function describeSource(sourceType: ChunkSource, sourceId: string): Sourc
       courseId: n.course_id,
       courseCode: c.code,
       to: `/notes?note=${encodeURIComponent(sourceId)}`,
+      atSec: null,
       href: null,
     };
   }
@@ -71,23 +83,29 @@ export function describeSource(sourceType: ChunkSource, sourceId: string): Sourc
       courseId: m.course_id,
       courseCode: c.code,
       to: `/materials?open=${encodeURIComponent(sourceId)}`,
+      atSec: null,
       href: null,
     };
   }
 
-  // "transcript" covers both lecture transcripts and course prose (forum posts,
-  // section blurbs) — they share a source type in the index but not a home.
-  const l = db.prepare("SELECT title, course_id FROM lectures WHERE id = ?").get(sourceId) as
-    | { title: string; course_id: string | null }
-    | undefined;
+  const l =
+    sourceType === "course_text"
+      ? undefined
+      : (db.prepare("SELECT title, course_id, provider FROM lectures WHERE id = ?").get(sourceId) as
+          | { title: string; course_id: string | null; provider: string | null }
+          | undefined);
   if (l) {
     const c = course(l.course_id);
+    const slides = l.provider === "slides";
+    const where = at == null ? "" : slides ? ` · slide ${at}` : ` · ${clock(at)}`;
+    const atSec = at != null && !slides ? Math.floor(at) : null;
     return {
-      label: l.title,
+      label: `${l.title}${where}`,
       kind: "lecture",
       courseId: l.course_id,
       courseCode: c.code,
-      to: `/lectures?lecture=${encodeURIComponent(sourceId)}`,
+      to: `/lectures?lecture=${encodeURIComponent(sourceId)}${atSec != null ? `&t=${atSec}` : ""}`,
+      atSec,
       href: null,
     };
   }
@@ -105,6 +123,7 @@ export function describeSource(sourceType: ChunkSource, sourceId: string): Sourc
       courseId: t.course_id,
       courseCode: c.code,
       to: null,
+      atSec: null,
       href: c.url,
     };
   }

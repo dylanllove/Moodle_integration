@@ -129,9 +129,29 @@ brew install whisper-cpp     # lecture transcription — the big saving
 ollama pull llama3.1:8b      # notes, flashcards, chat  (https://ollama.com)
 ```
 
-The app finds both on its own. **Settings → AI cost** shows what's been spent and on what, lets you
-force either half local, and takes a monthly cap that pauses paid calls when reached. With no OpenAI
-key at all it still runs, using whatever is installed locally.
+Then press **Download model** under **Settings → AI cost** — the app fetches the Whisper model
+(`large-v3-turbo`, ~550 MB, once) and a small voice-detection model into `data/models/`. A two-hour
+lecture then transcribes on an M-series Mac in a couple of minutes, for nothing.
+
+Before any audio is transcribed, Echo360's own captions are tried (free, with timings). When audio does
+have to go to OpenAI, only the stretches where someone is speaking are sent — the empty room before,
+after and in the break is cut out first — and a transcription that would take the month over the
+cap isn't sent at all. Transcription set to **Local only** never pays: without a local model, lectures
+wait (marked *needs model*) rather than falling back.
+
+**Settings → AI cost** shows what's been spent and on what, lets you force either half local, and takes
+a monthly cap that pauses paid calls when reached. **Settings → Connections** tests Moodle, Echo360,
+OpenAI and the local tools live, and a banner says so on every page when one of them stops working.
+
+### What a lecture turns into
+
+One model call per lecture reads the transcript as numbered, timestamped lines and returns structured
+data: an overview and topics, the lecture's sections, key concepts and terms, the lecturer's exam hints,
+and flashcard questions — each pointing at the second (or slide) it came from. These are stored as rows
+(`lecture_digests`, `lecture_sections`, `lecture_concepts`, `lecture_emphasis`, `lecture_questions`);
+the study notes are rendered from them, the lecture's deck is made from the questions, and search and
+chat citations open the recording at the right moment ("Lecture 4 · 14:37"). Long lectures are analysed
+in parts rather than truncated.
 
 ### Flashcards, Quizlet and Anki
 
@@ -170,10 +190,14 @@ npm-workspace monorepo:
 - `packages/db` — local SQLite (via Node's built-in `node:sqlite`)
 - `packages/lms` — Moodle Web Services client, Echo360 connector, timetable/iCal ingestion,
   course-file downloader, gradebook import, commitment expansion
-- `packages/ai` — OpenAI wrappers (summaries, drafting, cheat sheets, flashcards, chat)
-- `packages/transcribe` — ffmpeg + OpenAI transcription
+- `packages/ai` — the model gateway (local or OpenAI, cache, ledger, budget), the structured lecture
+  analysis, retrieval, drafting, cheat sheets, flashcards, chat
+- `packages/transcribe` — ffmpeg (audio, silence detection), local whisper.cpp, and the paid fallback
+- `tests/` — `npm test`: unit tests plus the whole lecture pipeline on a real recording, in a
+  throwaway data folder with a stand-in model, so it's free and never touches your data
 
-Data lives in `./data/` (SQLite, downloaded audio, transcripts, `materials/`) and is git-ignored.
+Data lives in `./data/` (SQLite, transcripts, `materials/`, `models/`) and is git-ignored. Lecture
+audio is a working copy, deleted once its transcript is saved.
 
 **On launch, then every twenty minutes**, in the background: personal commitments → Moodle sync →
 gradebook → course files → search index → push to Google/Notion → Echo360 recordings → transcripts,

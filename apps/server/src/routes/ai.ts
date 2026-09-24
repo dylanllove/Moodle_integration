@@ -1,11 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { getDb } from "@uni/db";
 import {
-  hasApiKey,
-  localStatus,
-  summariseLecture,
-  transcriptToNotes,
-  explain,
+  canComplete,
   flashcards,
   indexAll,
   outlineAssignment,
@@ -31,44 +27,22 @@ export async function registerAiRoutes(app: FastifyInstance): Promise<void> {
     "/api/ai/status",
     "/api/ai/options",
     "/api/ai/probe-local",
+    "/api/ai/install-whisper", // downloading the free transcriber needs no model
     "/api/ai/cache",
   ];
   app.addHook("preHandler", async (req, reply) => {
     if (!req.url.startsWith("/api/ai/")) return;
     if (EXEMPT.some((p) => req.url.startsWith(p))) return;
-    if (hasApiKey()) return;
-    if ((await localStatus()).ok) return;
+    if (await canComplete()) return;
     reply.code(400).send({
       error:
         "No model available: add an OpenAI key in setup, or install a local one (ollama pull llama3.1:8b) to run this for free.",
     });
   });
 
-  app.post<{ Body: { lecture_id: string; mode?: "summary" | "notes" } }>(
-    "/api/ai/summarise-lecture",
-    async (req, reply) => {
-      const t = db
-        .prepare("SELECT text FROM transcripts WHERE lecture_id = ? AND status = 'done'")
-        .get(req.body.lecture_id) as { text: string | null } | undefined;
-      if (!t?.text) return reply.code(400).send({ error: "No completed transcript for this lecture." });
-      const lec = db.prepare("SELECT title FROM lectures WHERE id = ?").get(req.body.lecture_id) as
-        | { title: string }
-        | undefined;
-      const markdown =
-        req.body.mode === "notes"
-          ? await transcriptToNotes(t.text)
-          : await summariseLecture(t.text, lec?.title);
-      return { markdown };
-    },
-  );
-
   app.post<{ Body: { text?: string; note_id?: string } }>("/api/ai/flashcards", async (req) => {
     const text = req.body.text ?? noteText(req.body.note_id);
     return { cards: await flashcards(text) };
-  });
-
-  app.post<{ Body: { text: string; context?: string } }>("/api/ai/explain", async (req) => {
-    return { markdown: await explain(req.body.text, req.body.context) };
   });
 
   app.post("/api/ai/reindex", async () => indexAll());

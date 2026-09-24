@@ -326,7 +326,7 @@ export function search(query: string, limit = 24): SearchHit[] {
   // Slides, transcripts and notes, by what they actually say. Ranked below the
   // named results because a title match is a stronger signal of intent.
   for (const chunk of retrieve(q, null, 6)) {
-    const ref = describeSource(chunk.sourceType, chunk.sourceId);
+    const ref = describeSource(chunk.sourceType, chunk.sourceId, chunk.startSec);
     if (!ref || (!ref.to && !ref.href)) continue;
     hits.push({
       id: `content:${chunk.sourceType}:${chunk.sourceId}:${hits.length}`,
@@ -345,7 +345,9 @@ export function search(query: string, limit = 24): SearchHit[] {
   // should be offered once.
   const byDestination = new Map<string, SearchHit>();
   for (const h of hits.sort((a, b) => b.score - a.score)) {
-    const key = h.to ?? h.href ?? h.id;
+    // A lecture found at several moments is still one lecture; the best-scoring
+    // moment's link is the one kept.
+    const key = (h.to ?? h.href ?? h.id).replace(/&t=\d+$/, "");
     const existing = byDestination.get(key);
     if (!existing) byDestination.set(key, h);
     // Keep the higher-ranked row but don't lose a snippet the loser carried.

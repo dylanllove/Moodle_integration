@@ -13,6 +13,7 @@ import {
 } from "@uni/lms";
 import { indexAll } from "@uni/ai";
 import { backfillTranscripts } from "../transcripts.js";
+import { noteConnection } from "../health.js";
 
 interface Section {
   sectionId: string;
@@ -75,6 +76,9 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
     if (r.ok) {
       setSetting("echo360_last_warm", new Date().toISOString());
       clearEchoFailures();
+      noteConnection("echo360", true);
+    } else if (r.reason === "ECHO_SESSION_EXPIRED") {
+      noteConnection("echo360", false, r.reason);
     }
     return r;
   });
@@ -86,6 +90,8 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
   app.post("/api/echo360/verify", async () => {
     const res = await echoVerify();
     if (res.connected) {
+      noteConnection("echo360", true);
+      clearEchoFailures();
       app.log.info("Echo360 connected — starting background lecture sync.");
       void app.inject({ method: "POST", url: "/api/echo360/sync" }).catch(() => {});
     }
@@ -217,6 +223,7 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
 
     if (expired) {
       noteEchoFailure();
+      noteConnection("echo360", false, "ECHO_SESSION_EXPIRED");
       if (echoFailureCount() >= EXPIRY_STRIKES) clearEchoSession();
       return reply.code(401).send({
         error:
@@ -227,6 +234,7 @@ export async function registerEcho360Routes(app: FastifyInstance): Promise<void>
       });
     }
     clearEchoFailures();
+    noteConnection("echo360", true);
 
     // Now fetch whatever transcripts are outstanding — Echo's own captions where
     // they exist, our own transcription where they don't.

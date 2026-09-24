@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api, type Lecture, type Transcript, type TranscriptSegment, type Course } from "../api.js";
+import {
+  api,
+  type Anchor,
+  type Course,
+  type Lecture,
+  type LectureDetail as Detail,
+  type TranscriptSegment,
+} from "../api.js";
 import { useSyncedRefresh } from "../hooks.js";
 import {
   Card,
@@ -136,7 +143,16 @@ export function Lectures() {
           )}
         </div>
         <div>
-          {selected ? <LectureDetail id={selected} onChange={load} /> : <EmptyState icon="📄">Select a lecture.</EmptyState>}
+          {selected ? (
+            <LectureDetail
+              id={selected}
+              // A citation ("Lecture 4 · 14:37") opens the lecture at that moment.
+              at={selected === wanted && params.get("t") ? Number(params.get("t")) : null}
+              onChange={load}
+            />
+          ) : (
+            <EmptyState icon="📄">Select a lecture.</EmptyState>
+          )}
         </div>
       </div>
     </div>
@@ -156,6 +172,8 @@ function StatusDot({ l }: { l: Lecture }) {
     return <span className="text-xs text-ink-muted">upcoming</span>;
   }
   if (l.transcript_status === "no_recording") return <Badge tone="amber">no rec</Badge>;
+  if (l.transcript_status === "needs_local") return <Badge tone="amber">needs model</Badge>;
+  if (l.transcript_status === "over_budget") return <Badge tone="amber">over budget</Badge>;
   if (["pending", "downloading", "transcribing"].includes(l.transcript_status ?? "")) {
     return <Badge tone="neutral">working…</Badge>;
   }
@@ -220,18 +238,20 @@ function UploadButton({ courses, onDone }: { courses: Course[]; onDone: () => vo
   );
 }
 
-function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
-  const [lecture, setLecture] = useState<Lecture | null>(null);
-  const [transcript, setTranscript] = useState<Transcript | null>(null);
+const SETTLED = ["done", "error", "no_recording", "needs_local", "over_budget"];
+
+function LectureDetail({ id, at, onChange }: { id: string; at: number | null; onChange: () => void }) {
+  const [detail, setDetail] = useState<Detail | null>(null);
   const [tab, setTab] = useState<"notes" | "transcript" | "timestamps">("notes");
   const [notesBusy, setNotesBusy] = useState(false);
+  /** The moment to scroll the timestamps to, after a jump. */
+  const [focus, setFocus] = useState<number | null>(at);
   const poll = useRef<ReturnType<typeof setInterval> | null>(null);
 
   async function loadOne() {
-    const { lecture, transcript } = await api.lecture(id);
-    setLecture(lecture);
-    setTranscript(transcript);
-    return transcript?.status;
+    const d = await api.lecture(id);
+    setDetail(d);
+    return d.transcript?.status;
   }
 
   async function makeNotes() {
@@ -245,11 +265,12 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
     }
   }
   useEffect(() => {
-    loadOne().then((s) => setTab(s === "done" ? "notes" : "transcript"));
+    setFocus(at);
+    loadOne().then((s) => setTab(at != null ? "timestamps" : s === "done" ? "notes" : "transcript"));
     return () => {
       if (poll.current) clearInterval(poll.current);
     };
-  }, [id]);
+  }, [id, at]);
 
   async function process() {
     await api.processLecture(id);
@@ -257,28 +278,37 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
     if (poll.current) clearInterval(poll.current);
     poll.current = setInterval(async () => {
       const s = await loadOne();
-      if (s === "done" || s === "error" || s === "no_recording") {
+      if (SETTLED.includes(s ?? "")) {
         clearInterval(poll.current!);
         onChange();
       }
     }, 2500);
   }
 
-  if (!lecture) return null;
+  if (!detail) return null;
+  const { lecture, transcript, digest } = detail;
   const status = transcript?.status;
   const busy = ["pending", "downloading", "transcribing"].includes(status ?? "");
   const noRecording = status === "no_recording";
+  const waiting = status === "needs_local" || status === "over_budget";
   const segments: TranscriptSegment[] = transcript?.segments ? JSON.parse(transcript.segments) : [];
   const isSlides = lecture.provider === "slides";
   const done = status === "done" && !!transcript?.text;
-  const paragraphs = (transcript?.text ?? "").split(/\n{2,}/).filter((p) => p.trim());
-  const hasNotes = !!transcript?.summary;
+  const paragraphs = (transcript?.clean_text ?? transcript?.text ?? "").split(/\n{2,}/).filter((p) => p.trim());
+  const hasNotes = !!digest || !!transcript?.summary;
   const effectiveTab = tab === "timestamps" && segments.length === 0 ? "transcript" : tab;
+  const anchor: Anchor = digest?.anchor ?? (isSlides ? "page" : "seconds");
+
+  const jump = (sec: number | null) => {
+    if (sec == null || !segments.length) return;
+    setFocus(sec);
+    setTab("timestamps");
+  };
 
   const tabs = [
     { key: "notes" as const, label: "Study notes" },
     { key: "transcript" as const, label: "Transcript" },
-    ...(segments.length ? [{ key: "timestamps" as const, label: "Timestamps" }] : []),
+    ...(segments.length ? [{ key: "timestamps" as const, label: isSlides ? "Slides" : "Timestamps" }] : []),
   ];
 
   return (
@@ -290,8 +320,9 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
           </h2>
           {/* Provider only when it's the unusual one; "transcribed" is implied
               by the notes/transcript tabs being there at all. */}
-          {(isSlides || noRecording) && (
+          {(isSlides || noRecording || digest?.week) && (
             <div className="mt-2 flex flex-wrap items-center gap-2">
+              {digest?.week && <Chip>week {digest.week}</Chip>}
               {isSlides && <Chip>slides</Chip>}
               {noRecording && <Badge tone="amber">no recording yet</Badge>}
             </div>
@@ -311,6 +342,17 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
 
       {busy && <Spinner label={status === "transcribing" ? "Transcribing & writing notes…" : "Downloading…"} />}
       {status === "error" && <Notice tone="error">{transcript?.error}</Notice>}
+      {waiting && (
+        <Notice tone="warn">
+          {transcript?.error ??
+            (status === "needs_local"
+              ? "Waiting for the local transcription model — install it in Settings → AI."
+              : "Transcribing this would go over the monthly AI budget.")}{" "}
+          <a className="font-semibold underline" href="/settings">
+            Open Settings
+          </a>
+        </Notice>
+      )}
 
       {done && (
         <>
@@ -319,7 +361,9 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
           </div>
 
           {effectiveTab === "notes" &&
-            (hasNotes ? (
+            (digest ? (
+              <StructuredNotes detail={detail} anchor={anchor} onJump={segments.length ? jump : null} />
+            ) : hasNotes ? (
               <div className="pane max-h-[64vh] rounded-card bg-chip/50 p-5">
                 <Markdown>{transcript!.summary!}</Markdown>
               </div>
@@ -340,32 +384,204 @@ function LectureDetail({ id, onChange }: { id: string; onChange: () => void }) {
             </div>
           )}
 
-          {effectiveTab === "timestamps" && (
-            <div className="pane max-h-[64vh] rounded-card bg-chip/50 p-4 text-sm leading-relaxed text-ink-soft">
-              {segments.map((s, i) => (
-                <p key={i} className="flex gap-3 rounded-field px-2 py-1 transition duration-150 hover:bg-surface">
-                  <span className="shrink-0 select-none pt-0.5 font-mono text-[11px] tabular-nums text-ink-muted">
-                    {fmt(s.start)}
-                  </span>
-                  <span>{s.text}</span>
-                </p>
-              ))}
-            </div>
-          )}
+          {effectiveTab === "timestamps" && <Timeline segments={segments} focus={focus} isSlides={isSlides} />}
         </>
       )}
 
       {noRecording && (
         <p className="text-sm text-ink-muted">
-          This class hasn't been recorded/published yet. It'll transcribe automatically once the recording appears.
+          {transcript?.error
+            ? `${transcript.error} It'll be checked again automatically.`
+            : "This class hasn't been recorded/published yet. It'll transcribe automatically once the recording appears."}
         </p>
       )}
-      {!busy && !done && !noRecording && (
+      {!busy && !done && !noRecording && !waiting && (
         <p className="text-sm text-ink-muted">
           Not processed yet — click {isSlides ? "Extract text" : "Transcribe"}.
         </p>
       )}
     </Card>
+  );
+}
+
+/** A clickable "14:37" / "slide 6" that jumps to that point in the transcript. */
+function At({ sec, anchor, onJump }: { sec: number | null; anchor: Anchor; onJump: ((s: number) => void) | null }) {
+  if (sec == null || anchor === "none") return null;
+  const label = anchor === "page" ? `slide ${sec}` : fmt(sec);
+  if (!onJump) {
+    return <span className="mt-1 shrink-0 self-start font-mono text-[11px] leading-4 tabular-nums text-ink-muted">{label}</span>;
+  }
+  return (
+    <button
+      onClick={() => onJump(sec)}
+      className="mt-1 shrink-0 self-start rounded-field bg-surface px-1.5 py-0.5 font-mono text-[11px] leading-4 tabular-nums text-accent-deep transition hover:bg-accent-tint"
+      title="Jump to this point"
+    >
+      {label}
+    </button>
+  );
+}
+
+function StructuredNotes({
+  detail,
+  anchor,
+  onJump,
+}: {
+  detail: Detail;
+  anchor: Anchor;
+  onJump: ((s: number) => void) | null;
+}) {
+  const { digest, sections, concepts, emphasis, questions } = detail;
+  const [reveal, setReveal] = useState<Set<string>>(new Set());
+  const bySection = useMemo(() => {
+    const m = new Map<string | null, typeof concepts>();
+    for (const c of concepts) m.set(c.section_id, [...(m.get(c.section_id) ?? []), c]);
+    return m;
+  }, [concepts]);
+  const terms = concepts.filter((c) => c.kind !== "concept");
+  const H = ({ children }: { children: string }) => (
+    <h3 className="mb-2 mt-6 font-display text-[15px] font-bold tracking-tight text-ink first:mt-0">{children}</h3>
+  );
+
+  return (
+    <div className="pane max-h-[64vh] rounded-card bg-chip/50 p-5 text-[15px] leading-7 text-ink-soft">
+      <H>TL;DR</H>
+      <p>{digest!.tldr}</p>
+      {digest!.topics.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {digest!.topics.map((t) => (
+            <Chip key={t}>{t}</Chip>
+          ))}
+        </div>
+      )}
+
+      {emphasis.length > 0 && (
+        <>
+          <H>⭐ Likely exam / emphasis</H>
+          <ul className="space-y-2">
+            {emphasis.map((e) => (
+              <li key={e.id} className="flex gap-2">
+                <At sec={e.start_sec} anchor={anchor} onJump={onJump} />
+                <span>
+                  “{e.quote}” — <span className="text-ink-muted">{e.why}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {sections.length > 0 && <H>Walkthrough</H>}
+      <div className="space-y-4">
+        {sections.map((s) => (
+          <div key={s.id}>
+            <div className="flex items-baseline gap-2">
+              <At sec={s.start_sec} anchor={anchor} onJump={onJump} />
+              <span className="font-semibold text-ink">{s.title}</span>
+            </div>
+            <p className="mt-1">{s.summary}</p>
+            {(bySection.get(s.id) ?? [])
+              .filter((c) => c.kind === "concept")
+              .map((c) => (
+                <p key={c.id} className="mt-1 pl-3">
+                  <strong className="text-ink">{c.name}</strong> — {c.explanation}
+                </p>
+              ))}
+          </div>
+        ))}
+      </div>
+
+      {terms.length > 0 && (
+        <>
+          <H>Key terms</H>
+          <ul className="space-y-1.5">
+            {terms.map((c) => (
+              <li key={c.id} className="flex gap-2">
+                <At sec={c.start_sec} anchor={anchor} onJump={onJump} />
+                <span>
+                  <strong className="text-ink">{c.name}</strong> — {c.explanation}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {questions.length > 0 && (
+        <>
+          <H>Test yourself</H>
+          <ul className="space-y-2">
+            {questions.map((q) => (
+              <li key={q.id}>
+                <button
+                  className="text-left"
+                  onClick={() =>
+                    setReveal((r) => {
+                      const n = new Set(r);
+                      n.has(q.id) ? n.delete(q.id) : n.add(q.id);
+                      return n;
+                    })
+                  }
+                >
+                  {q.question}
+                </button>
+                {reveal.has(q.id) && (
+                  <p className="mt-1 flex gap-2 pl-3 text-ink-muted">
+                    <span>{q.answer}</span>
+                    <At sec={q.start_sec} anchor={anchor} onJump={onJump} />
+                  </p>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
+
+function Timeline({
+  segments,
+  focus,
+  isSlides,
+}: {
+  segments: TranscriptSegment[];
+  focus: number | null;
+  isSlides: boolean;
+}) {
+  const box = useRef<HTMLDivElement>(null);
+  const pos = (s: TranscriptSegment) => (isSlides ? (s.page ?? 0) : s.start);
+  // The segment containing the focused moment: the last one starting at or before it.
+  const target = useMemo(() => {
+    if (focus == null) return -1;
+    let hit = -1;
+    segments.forEach((s, i) => {
+      if (pos(s) <= focus) hit = i;
+    });
+    return hit;
+  }, [segments, focus, isSlides]);
+  useEffect(() => {
+    if (target < 0) return;
+    box.current?.querySelector(`[data-seg="${target}"]`)?.scrollIntoView({ block: "center" });
+  }, [target]);
+
+  return (
+    <div ref={box} className="pane max-h-[64vh] rounded-card bg-chip/50 p-4 text-sm leading-relaxed text-ink-soft">
+      {segments.map((s, i) => (
+        <p
+          key={i}
+          data-seg={i}
+          className={`flex gap-3 rounded-field px-2 py-1 transition duration-150 hover:bg-surface ${
+            i === target ? "bg-accent-tint" : ""
+          }`}
+        >
+          <span className="shrink-0 select-none pt-0.5 font-mono text-[11px] tabular-nums text-ink-muted">
+            {isSlides ? `slide ${s.page ?? i + 1}` : fmt(s.start)}
+          </span>
+          <span>{s.text}</span>
+        </p>
+      ))}
+    </div>
   );
 }
 

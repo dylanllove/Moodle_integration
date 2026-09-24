@@ -1,9 +1,12 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, basename } from "node:path";
-import type { TranscriptSegment } from "@uni/db";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { dataDir, type TranscriptSegment } from "@uni/db";
+import { extractAudio } from "./ffmpeg.js";
 
 const run = promisify(execFile);
 
@@ -26,6 +29,8 @@ export interface LocalTranscriber {
   engine: LocalEngine;
   binary: string;
   model: string | null;
+  /** Silero VAD model for whisper.cpp, when present — skips dead air. */
+  vadModel: string | null;
 }
 
 const CANDIDATES: { engine: LocalEngine; names: string[] }[] = [
@@ -43,11 +48,28 @@ async function which(name: string): Promise<string | null> {
   }
 }
 
+/**
+ * The models this app installs for itself. large-v3-turbo quantised to q5_0 is
+ * about 550 MB, close to large-v3 on lecture English, and runs several times
+ * faster than real time on Apple silicon. The VAD model is under a megabyte.
+ */
+const HF = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main";
+export const WHISPER_MODEL_FILE = "ggml-large-v3-turbo-q5_0.bin";
+export const VAD_MODEL_FILE = "ggml-silero-v5.1.2.bin";
+const DOWNLOADS: Record<string, string> = {
+  [WHISPER_MODEL_FILE]: `${HF}/${WHISPER_MODEL_FILE}`,
+  [VAD_MODEL_FILE]: "https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin",
+};
+
+const modelsDir = () => join(dataDir(), "models");
+
 /** A model file for whisper.cpp, which needs one passed explicitly. */
 function findModel(): string | null {
   const explicit = process.env.WHISPER_MODEL;
   if (explicit && existsSync(explicit)) return explicit;
   const guesses = [
+    join(modelsDir(), WHISPER_MODEL_FILE),
+    join(modelsDir(), "ggml-large-v3-turbo.bin"),
     "models/ggml-large-v3-turbo.bin",
     "models/ggml-medium.en.bin",
     "models/ggml-base.en.bin",
@@ -56,6 +78,73 @@ function findModel(): string | null {
     "/opt/homebrew/share/whisper-cpp/ggml-base.en.bin",
   ];
   return guesses.find((g) => existsSync(g)) ?? null;
+}
+
+function findVadModel(): string | null {
+  const p = join(modelsDir(), VAD_MODEL_FILE);
+  return existsSync(p) ? p : null;
+}
+
+/** whisper.cpp's binary, whether or not a model is installed for it yet. */
+export async function whisperCppBinary(): Promise<string | null> {
+  for (const name of CANDIDATES[0]!.names) {
+    const found = await which(name);
+    if (found) return found;
+  }
+  return null;
+}
+
+export interface InstallProgress {
+  file: string;
+  state: "idle" | "downloading" | "done" | "error";
+  bytes: number;
+  total: number | null;
+  error?: string;
+}
+
+let install: InstallProgress = { file: WHISPER_MODEL_FILE, state: "idle", bytes: 0, total: null };
+let installing: Promise<void> | null = null;
+
+export function whisperInstallProgress(): InstallProgress {
+  return install;
+}
+
+/**
+ * Download the local transcription models into the data directory, so "install
+ * whisper.cpp" is the student's only setup step instead of also hunting for a
+ * model file. Single-flight: a second click joins the download in progress.
+ * Streams to a .part file and renames, so a lid closed half-way leaves nothing
+ * that looks like a model.
+ */
+export function ensureWhisperModel(): Promise<void> {
+  if (installing) return installing;
+  installing = (async () => {
+    mkdirSync(modelsDir(), { recursive: true });
+    for (const file of [VAD_MODEL_FILE, WHISPER_MODEL_FILE]) {
+      const dest = join(modelsDir(), file);
+      if (existsSync(dest) && statSync(dest).size > 0) continue;
+      install = { file, state: "downloading", bytes: 0, total: null };
+      const res = await fetch(DOWNLOADS[file]!, { redirect: "follow" });
+      if (!res.ok || !res.body) throw new Error(`Downloading ${file}: HTTP ${res.status}`);
+      const len = Number(res.headers.get("content-length"));
+      install.total = Number.isFinite(len) && len > 0 ? len : null;
+      const part = `${dest}.part`;
+      const body = Readable.fromWeb(res.body as any);
+      body.on("data", (chunk: Buffer) => (install.bytes += chunk.length));
+      await pipeline(body, createWriteStream(part));
+      renameSync(part, dest);
+    }
+    install = { ...install, state: "done" };
+    cached = null; // the next probe should see the new model straight away
+  })()
+    .catch((e) => {
+      install = { ...install, state: "error", error: String(e instanceof Error ? e.message : e) };
+      throw e;
+    })
+    .finally(() => {
+      installing = null;
+    });
+  return installing;
 }
 
 let cached: { at: number; found: LocalTranscriber | null } | null = null;
@@ -74,7 +163,12 @@ export async function localTranscriber(force = false): Promise<LocalTranscriber 
       // whisper.cpp without a model file can't do anything, so it doesn't count
       // as installed — better to fall through than fail at transcription time.
       if (candidate.engine === "whisper-cpp" && !model) continue;
-      found = { engine: candidate.engine, binary, model };
+      found = {
+        engine: candidate.engine,
+        binary,
+        model,
+        vadModel: candidate.engine === "whisper-cpp" ? findVadModel() : null,
+      };
       break;
     }
     if (found) break;
@@ -96,10 +190,18 @@ export async function transcribeLocally(
   const stem = join(dir, basename(audioPath).replace(/\.[^.]+$/, ""));
   try {
     if (transcriber.engine === "whisper-cpp") {
-      // -oj writes <stem>.json alongside; -np keeps stdout quiet.
+      // whisper.cpp builds differ on what they'll decode; 16 kHz mono WAV is the
+      // one input every build accepts.
+      const wav = `${stem}.wav`;
+      await extractAudio(audioPath, wav);
+      // -oj writes <stem>.json alongside; -np keeps stdout quiet. VAD skips the
+      // dead air either side of the lecture — faster, and no hallucinated
+      // "Thank you." lines over twenty minutes of an empty room — while keeping
+      // timestamps on the original recording's clock.
+      const vad = transcriber.vadModel ? ["--vad", "-vm", transcriber.vadModel] : [];
       await run(
         transcriber.binary,
-        ["-m", transcriber.model!, "-f", audioPath, "-oj", "-of", stem, "-np", "-l", "en"],
+        ["-m", transcriber.model!, "-f", wav, "-oj", "-of", stem, "-np", "-l", "en", ...vad],
         { maxBuffer: 64 * 1024 * 1024 },
       );
       return readWhisperCppJson(`${stem}.json`);

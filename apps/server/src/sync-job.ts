@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { getSetting, setSetting } from "@uni/db";
 import { resetSourceCache } from "./sources.js";
+import { noteConnection } from "./health.js";
 
 /**
  * The one sync.
@@ -115,12 +116,25 @@ async function execute(app: FastifyInstance): Promise<SyncState> {
       return occurrences ? `${occurrences} occurrences rebuilt` : "none set up yet";
     });
 
-    const moodleReady = lms.moodleApiConfigured();
+    let moodleReady = lms.moodleApiConfigured();
 
     await step(
       "moodle",
       async () => {
-        const r = (await lms.sync()) as { counts?: Record<string, number> };
+        const r = (await lms.sync()) as { ok?: boolean; error?: string; counts?: Record<string, number> };
+        if (r.ok === false) {
+          // A refused sign-in used to come back as "nothing new", which is how a
+          // revoked token went unnoticed for a month. Say so, stop the steps
+          // that need Moodle from each failing the same way, and raise the banner.
+          const err = r.error ?? "Moodle sync failed";
+          if (/invalidtoken|accessexception|invalidlogin/i.test(err)) {
+            moodleReady = false;
+            noteConnection("moodle", false, "expired");
+            throw new Error("Moodle sign-in has expired — sign in again in setup.");
+          }
+          throw new Error(err.replace(/^Error:\s*/, ""));
+        }
+        noteConnection("moodle", true);
         const c = r.counts ?? {};
         setSetting("last_synced", new Date().toISOString());
         resetSourceCache();
@@ -134,7 +148,7 @@ async function execute(app: FastifyInstance): Promise<SyncState> {
       async () => {
         return summarise({ ...(await lms.syncGrades()) });
       },
-      () => (moodleReady ? null : "needs Moodle"),
+      () => (moodleReady ? null : lms.moodleApiConfigured() ? "waiting for Moodle sign-in" : "needs Moodle"),
     );
 
     await step(
@@ -152,7 +166,9 @@ async function execute(app: FastifyInstance): Promise<SyncState> {
       },
       () =>
         !moodleReady
-          ? "needs Moodle"
+          ? lms.moodleApiConfigured()
+            ? "waiting for Moodle sign-in"
+            : "needs Moodle"
           : getSetting("auto_materials") === "false"
             ? "turned off in Settings"
             : null,

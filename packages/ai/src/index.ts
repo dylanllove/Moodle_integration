@@ -16,6 +16,9 @@ export {
   cacheStats,
   clearCache,
   estimateCost,
+  estimateAudioCost,
+  remainingBudgetUsd,
+  canComplete,
   record as recordAiUsage,
   type AiHealth,
   type AiFault,
@@ -24,17 +27,23 @@ export {
   type Spend,
 } from "./gateway.js";
 export {
-  summariseLecture,
-  transcriptToNotes,
-  explain,
   flashcards,
   generateDeck,
   cheatSheet,
   cleanTranscript,
-  lectureNotes,
   type Flashcard,
   type DeckOpts,
 } from "./study.js";
+export {
+  analyseLecture,
+  renderNotesMarkdown,
+  clock,
+  ANALYSIS_VERSION,
+  type LectureAnalysis,
+  type AnalysisResult,
+  type Anchor,
+  type ConceptKind,
+} from "./analyse.js";
 export {
   indexAll,
   retrieve,

@@ -57,12 +57,66 @@ CREATE TABLE IF NOT EXISTS lectures (
 CREATE TABLE IF NOT EXISTS transcripts (
   id           TEXT PRIMARY KEY,
   lecture_id   TEXT UNIQUE REFERENCES lectures(id) ON DELETE CASCADE,
-  status       TEXT NOT NULL DEFAULT 'pending', -- pending | downloading | transcribing | done | error
+  status       TEXT NOT NULL DEFAULT 'pending', -- pending | downloading | transcribing | done | error | no_recording | needs_local | over_budget
   text         TEXT,                     -- full plain text
-  segments     TEXT,                     -- JSON array of {start,end,text}
+  segments     TEXT,                     -- JSON array of {start,end,text,page?}
   error        TEXT,
   created_at   TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- What a lecture *says*, as data rather than one markdown blob. Written in one
+-- pass by analyseLecture(); every row carries the second of the recording it
+-- came from (NULL for slide decks), so a concept, a hint or a question can link
+-- straight back to the moment it was said.
+CREATE TABLE IF NOT EXISTS lecture_digests (
+  lecture_id     TEXT PRIMARY KEY REFERENCES lectures(id) ON DELETE CASCADE,
+  tldr           TEXT NOT NULL,
+  topics         TEXT NOT NULL DEFAULT '[]', -- JSON string[]
+  week           INTEGER,                    -- teaching week, when the course start is known
+  anchor         TEXT NOT NULL DEFAULT 'seconds', -- what start_sec holds below: seconds | page | none
+  schema_version INTEGER NOT NULL,
+  model          TEXT,
+  input_hash     TEXT NOT NULL,              -- of the transcript it was made from
+  generated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS lecture_sections (
+  id          TEXT PRIMARY KEY,
+  lecture_id  TEXT NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+  idx         INTEGER NOT NULL,
+  title       TEXT NOT NULL,
+  summary     TEXT NOT NULL,
+  start_sec   REAL,
+  end_sec     REAL
+);
+
+CREATE TABLE IF NOT EXISTS lecture_concepts (
+  id          TEXT PRIMARY KEY,
+  lecture_id  TEXT NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+  section_id  TEXT REFERENCES lecture_sections(id) ON DELETE SET NULL,
+  kind        TEXT NOT NULL,             -- concept | term | formula
+  name        TEXT NOT NULL,
+  explanation TEXT NOT NULL,
+  start_sec   REAL
+);
+
+-- "This will be on the exam" — the moments the lecturer flagged.
+CREATE TABLE IF NOT EXISTS lecture_emphasis (
+  id          TEXT PRIMARY KEY,
+  lecture_id  TEXT NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+  quote       TEXT NOT NULL,
+  why         TEXT NOT NULL,
+  start_sec   REAL
+);
+
+CREATE TABLE IF NOT EXISTS lecture_questions (
+  id          TEXT PRIMARY KEY,
+  lecture_id  TEXT NOT NULL REFERENCES lectures(id) ON DELETE CASCADE,
+  concept_id  TEXT REFERENCES lecture_concepts(id) ON DELETE SET NULL,
+  question    TEXT NOT NULL,
+  answer      TEXT NOT NULL,
+  start_sec   REAL
 );
 
 CREATE TABLE IF NOT EXISTS notes (
@@ -94,7 +148,7 @@ CREATE TABLE IF NOT EXISTS events (
 -- Chunked embeddings for retrieval over the student's own notes/transcripts.
 CREATE TABLE IF NOT EXISTS chunks (
   id          TEXT PRIMARY KEY,
-  source_type TEXT NOT NULL,             -- note | transcript
+  source_type TEXT NOT NULL,             -- note | transcript | course_text | material | digest
   source_id   TEXT NOT NULL,
   course_id   TEXT,
   text        TEXT NOT NULL,
@@ -294,6 +348,11 @@ CREATE INDEX IF NOT EXISTS idx_groups_course ON assessment_groups(course_id);
 CREATE INDEX IF NOT EXISTS idx_cards_deck ON cards(deck_id, due_at);
 CREATE INDEX IF NOT EXISTS idx_decks_course ON decks(course_id);
 CREATE INDEX IF NOT EXISTS idx_ai_usage_at ON ai_usage(at);
+CREATE INDEX IF NOT EXISTS idx_sections_lecture ON lecture_sections(lecture_id, idx);
+CREATE INDEX IF NOT EXISTS idx_concepts_lecture ON lecture_concepts(lecture_id);
+CREATE INDEX IF NOT EXISTS idx_emphasis_lecture ON lecture_emphasis(lecture_id);
+CREATE INDEX IF NOT EXISTS idx_questions_lecture ON lecture_questions(lecture_id);
+CREATE INDEX IF NOT EXISTS idx_chunks_lecture ON chunks(lecture_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_notion_links_target
   ON notion_links(kind, IFNULL(course_id, ''));
 `;

@@ -36,6 +36,7 @@ import { registerPlanRoutes } from "./routes/plan.js";
 import { registerAiCostRoutes } from "./routes/ai-cost.js";
 import { startScheduler } from "./scheduler.js";
 import { runFullSync } from "./sync-job.js";
+import { repairData } from "./repair.js";
 
 // Echo360 lesson ids are long (they embed timestamps), so allow long route params.
 const app = Fastify({ logger: true, maxParamLength: 1000 });
@@ -90,7 +91,8 @@ app
     app.log.info(`Uni Study server on http://127.0.0.1:${port}`);
     // Sync-on-launch: refresh everything in the background so the app is up to
     // date the moment it opens. Non-blocking; the UI watches /api/sync/progress.
-    void autoSyncOnLaunch(app);
+    // Fix up anything older versions wrote before the first sync reads it.
+    void repairData(app).then(() => autoSyncOnLaunch(app));
     // Weekly digest — ticks quietly, catches up if the laptop was shut.
     startScheduler(app);
   })

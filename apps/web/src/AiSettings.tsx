@@ -32,6 +32,14 @@ export function AiSettings() {
     load();
   }, [load]);
 
+  // While the model downloads, keep the progress bar moving.
+  const installing = status?.local.audio.install?.state === "downloading";
+  useEffect(() => {
+    if (!installing) return;
+    const t = setInterval(load, 1500);
+    return () => clearInterval(t);
+  }, [installing, load]);
+
   async function save(body: Parameters<typeof api.aiOptions>[0], note?: string) {
     setBusy("save");
     setMsg(null);
@@ -76,7 +84,8 @@ export function AiSettings() {
         Transcribing lectures is the biggest expense — around{" "}
         <strong className="font-semibold text-ink">$0.006 a minute</strong>, so a semester of
         recordings runs to real money. Both halves of the work can run on this machine instead, at no
-        cost and with nothing leaving it.
+        cost and with nothing leaving it. When audio does go to OpenAI, only the minutes where someone
+        is speaking are sent, and never past the monthly cap.
       </p>
 
       {msg && <Notice className="mb-5">{msg}</Notice>}
@@ -91,6 +100,15 @@ export function AiSettings() {
           hint={`${cache.entries} answers kept`}
         />
       </div>
+
+      {status.transcripts.length > 0 && (
+        <p className="mb-5 text-[13px] text-ink-muted">
+          Transcripts so far:{" "}
+          {status.transcripts
+            .map((t) => `${t.count} from ${SOURCE_LABEL[t.source] ?? t.source}`)
+            .join(" · ")}
+        </p>
+      )}
 
       {spend.byTask.length > 0 && (
         <Details summary="What it went on" className="mb-5">
@@ -137,15 +155,12 @@ export function AiSettings() {
               ? `Local Whisper ready (${local.audio.engine})`
               : "No local Whisper installed"
           }
-          help={
-            audioFree ? null : (
-              <>
-                Run <code className="rounded bg-chip px-1 font-mono text-[11px]">brew install whisper-cpp</code> and put a
-                model at <code className="rounded bg-chip px-1 font-mono text-[11px]">models/ggml-large-v3-turbo.bin</code>.
-                This is the change that saves the most.
-              </>
-            )
-          }
+          help={audioFree ? null : <AudioSetup status={status} onInstall={async () => {
+            setBusy("install");
+            await api.aiInstallWhisper().catch((e) => setMsg(String(e)));
+            await load();
+            setBusy(null);
+          }} />}
           value={status.transcribeProvider}
           onChange={(v) => save({ transcribeProvider: v }, `Transcription now: ${PROVIDER_LABEL[v]}.`)}
         />
@@ -201,6 +216,45 @@ export function AiSettings() {
         </div>
       </div>
     </Card>
+  );
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  captions: "Echo360 captions",
+  "local-whisper": "this machine",
+  "openai-whisper": "OpenAI",
+  slides: "slides",
+  upload: "uploads",
+  unknown: "earlier syncs",
+};
+
+/** The one-click half of local transcription, and what's left to do by hand. */
+function AudioSetup({ status, onInstall }: { status: AiStatus; onInstall: () => void }) {
+  const { binary, install } = status.local.audio;
+  const downloading = install?.state === "downloading";
+  const pct = install?.total ? Math.round((install.bytes / install.total) * 100) : null;
+  return (
+    <>
+      {!binary && (
+        <>
+          First run <code className="rounded bg-chip px-1 font-mono text-[11px]">brew install whisper-cpp</code>, then
+          download the model here.{" "}
+        </>
+      )}
+      {binary && !downloading && <>whisper.cpp is installed — it just needs its model (~550 MB, one-off). </>}
+      {downloading ? (
+        <span className="text-ink">
+          Downloading {install!.file}
+          {pct != null ? ` — ${pct}%` : "…"}
+        </span>
+      ) : (
+        <Button size="sm" className="ml-1" onClick={onInstall}>
+          Download model
+        </Button>
+      )}
+      {install?.state === "error" && <span className="block text-red-700">Download failed: {install.error}</span>}
+      <span className="mt-1 block">This is the change that saves the most.</span>
+    </>
   );
 }
 

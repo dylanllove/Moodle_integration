@@ -36,15 +36,36 @@ export interface TranscriptSegment {
   start: number;
   end: number;
   text: string;
+  /** Slide/page number, for text that came from a deck rather than a recording. */
+  page?: number;
 }
+
+export type TranscriptStatus =
+  | "pending"
+  | "downloading"
+  | "transcribing"
+  | "done"
+  | "error"
+  | "no_recording"
+  /** Transcription is set to local-only and there's no local model yet. */
+  | "needs_local"
+  /** Transcribing would have gone over the monthly budget. */
+  | "over_budget";
+
+export type TranscriptSource = "captions" | "local-whisper" | "openai-whisper" | "slides" | "upload";
 
 export interface Transcript {
   id: string;
   lecture_id: string;
-  status: "pending" | "downloading" | "transcribing" | "done" | "error";
+  status: TranscriptStatus;
   text: string | null;
   segments: string | null; // JSON TranscriptSegment[]
   error: string | null;
+  summary: string | null;
+  clean_text: string | null;
+  source: TranscriptSource | null;
+  model: string | null;
+  speech_sec: number | null;
 }
 
 export interface Note {

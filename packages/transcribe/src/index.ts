@@ -1,6 +1,29 @@
-export { enqueue, queueState } from "./pipeline.js";
-export { extractAudio, extractAudioMp3, probeDuration } from "./ffmpeg.js";
-export { transcribeFile } from "./openai-transcribe.js";
-export { resolveAudio } from "./download.js";
+export {
+  extractAudio,
+  extractAudioMp3,
+  probeDuration,
+  speechSpans,
+  writeSpeechOnly,
+  toOriginalTime,
+  type SpeechMap,
+} from "./ffmpeg.js";
+export {
+  transcribeFile,
+  transcribeProvider,
+  canTranscribe,
+  TranscriptionDeferred,
+  type TranscriptResult,
+  type TranscriptProvider,
+} from "./openai-transcribe.js";
+export { resolveMediaSource, type MediaSource } from "./download.js";
 
-export { localTranscriber, transcribeLocally, type LocalTranscriber } from "./local-transcribe.js";
+export {
+  localTranscriber,
+  transcribeLocally,
+  ensureWhisperModel,
+  whisperInstallProgress,
+  whisperCppBinary,
+  WHISPER_MODEL_FILE,
+  type LocalTranscriber,
+  type InstallProgress,
+} from "./local-transcribe.js";

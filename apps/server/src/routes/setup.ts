@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { getDb, getSetting, setSetting, dataDir } from "@uni/db";
 import { echoConnected, syncTimetable } from "@uni/lms";
 import { saveEnv } from "../env-file.js";
+import { forgetConnectionCheck, noteConnection } from "../health.js";
 
 /** The web-service shortname every Moodle site enables for its mobile app. */
 const MOBILE_SERVICE = "moodle_mobile_app";
@@ -204,6 +205,7 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
 
       saveEnv({ MOODLE_URL: site, MOODLE_TOKEN: json.token });
       setSetting("lms_url", site);
+      noteConnection("moodle", true);
       return { ok: true, site: info.sitename, user: info.fullname, url: site };
     },
   );
@@ -234,6 +236,7 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
 
       saveEnv({ MOODLE_URL: site, MOODLE_TOKEN: token });
       setSetting("lms_url", site);
+      noteConnection("moodle", true);
       return { ok: true, site: info.sitename, user: info.fullname, url: site };
     },
   );
@@ -262,6 +265,7 @@ export async function registerSetupRoutes(app: FastifyInstance): Promise<void> {
     }
 
     saveEnv({ OPENAI_API_KEY: key });
+    forgetConnectionCheck();
     return { ok: true };
   });
 

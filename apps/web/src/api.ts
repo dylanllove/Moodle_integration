@@ -347,6 +347,8 @@ export interface AnswerSource {
   courseId: string | null;
   courseCode: string | null;
   to: string | null;
+  /** Seconds into the lecture this came from, when known. */
+  atSec?: number | null;
   href: string | null;
 }
 
@@ -355,6 +357,23 @@ export interface SyncPhase {
   label: string;
   status: "pending" | "running" | "done" | "skipped" | "error";
   detail: string | null;
+}
+
+/* --- Connections ------------------------------------------------------------ */
+
+export interface HealthCheck {
+  key: "moodle" | "echo360" | "openai" | "whisper" | "ffmpeg" | "ollama";
+  label: string;
+  state: "ok" | "broken" | "missing" | "optional";
+  detail: string;
+  fix?: string;
+  to?: string;
+}
+
+export interface Health {
+  checkedAt: string;
+  ok: boolean;
+  checks: HealthCheck[];
 }
 
 /* --- AI cost --------------------------------------------------------------- */
@@ -375,8 +394,24 @@ export interface AiStatus {
   budgetUsd: number | null;
   local: {
     text: { ok: boolean; models: string[]; url: string };
-    audio: { ok: boolean; engine?: string; model?: string | null };
+    audio: {
+      ok: boolean;
+      engine?: string;
+      model?: string | null;
+      vad?: boolean;
+      /** whisper.cpp is installed, so only the model is missing. */
+      binary?: boolean;
+      install?: {
+        file: string;
+        state: "idle" | "downloading" | "done" | "error";
+        bytes: number;
+        total: number | null;
+        error?: string;
+      };
+    };
   };
+  /** How transcripts were made, e.g. captions / local-whisper / openai-whisper. */
+  transcripts: { source: string; count: number; minutes: number }[];
 }
 
 /* --- Today's plan ---------------------------------------------------------- */
@@ -565,15 +600,86 @@ export interface TranscriptSegment {
   start: number;
   end: number;
   text: string;
+  /** Slide number, for decks. */
+  page?: number;
 }
 
 export interface Transcript {
   lecture_id: string;
-  status: "pending" | "downloading" | "transcribing" | "done" | "error" | "no_recording";
+  status:
+    | "pending"
+    | "downloading"
+    | "transcribing"
+    | "done"
+    | "error"
+    | "no_recording"
+    | "needs_local"
+    | "over_budget";
   text: string | null;
   segments: string | null;
   summary: string | null;
   error: string | null;
+  /** A tidied read-through, when that setting is on; `text` stays word-for-word. */
+  clean_text: string | null;
+  source: "captions" | "local-whisper" | "openai-whisper" | "slides" | "upload" | null;
+  model: string | null;
+  speech_sec: number | null;
+}
+
+/** What `start_sec` means for a lecture's structured rows. */
+export type Anchor = "seconds" | "page" | "none";
+
+export interface LectureDigest {
+  lecture_id: string;
+  tldr: string;
+  topics: string[];
+  week: number | null;
+  anchor: Anchor;
+  model: string | null;
+  generated_at: string;
+}
+
+export interface LectureSection {
+  id: string;
+  idx: number;
+  title: string;
+  summary: string;
+  start_sec: number | null;
+  end_sec: number | null;
+}
+
+export interface LectureConcept {
+  id: string;
+  section_id: string | null;
+  kind: "concept" | "term" | "formula";
+  name: string;
+  explanation: string;
+  start_sec: number | null;
+}
+
+export interface LectureEmphasis {
+  id: string;
+  quote: string;
+  why: string;
+  start_sec: number | null;
+}
+
+export interface LectureQuestion {
+  id: string;
+  concept_id: string | null;
+  question: string;
+  answer: string;
+  start_sec: number | null;
+}
+
+export interface LectureDetail {
+  lecture: Lecture;
+  transcript: Transcript | null;
+  digest: LectureDigest | null;
+  sections: LectureSection[];
+  concepts: LectureConcept[];
+  emphasis: LectureEmphasis[];
+  questions: LectureQuestion[];
 }
 
 export interface SetupStatus {
@@ -627,16 +733,7 @@ export const api = {
       body: JSON.stringify({ url }),
     }),
   lecture: (id: string) =>
-    req<{ lecture: Lecture; transcript: Transcript | null }>(`/lectures/${id}`),
-  transcribe: (id: string) =>
-    req<{ ok: boolean; alreadyDone?: boolean; position?: number }>(`/lectures/${id}/transcribe`, {
-      method: "POST",
-    }),
-  transcribeStatus: () =>
-    req<{
-      queue: { running: string | null; pending: string[] };
-      lectures: { lecture_id: string; status: string; error: string | null }[];
-    }>("/transcribe/status"),
+    req<LectureDetail>(`/lectures/${id}`),
   settings: () => req<Record<string, string | null>>("/settings"),
   saveSettings: (body: Record<string, string>) =>
     req<{ ok: boolean }>("/settings", { method: "PUT", body: JSON.stringify(body) }),
@@ -715,6 +812,9 @@ export const api = {
     cleanTranscripts?: boolean;
   }) => req<{ ok: boolean }>("/ai/options", { method: "PUT", body: JSON.stringify(body) }),
   aiProbeLocal: () => req<{ ok: boolean }>("/ai/probe-local", { method: "POST" }),
+  aiInstallWhisper: () => req<{ ok: boolean }>("/ai/install-whisper", { method: "POST" }),
+  connections: () => req<Health>("/connections"),
+  connectionsCheck: () => req<Health>("/connections/check", { method: "POST" }),
   aiClearCache: () => req<{ ok: boolean; cleared: number }>("/ai/cache/clear", { method: "POST" }),
 
   // --- Today's plan ---
@@ -969,20 +1069,10 @@ export const api = {
   deleteNote: (id: string) => req<{ ok: boolean }>(`/notes/${id}`, { method: "DELETE" }),
 
   // AI actions
-  summariseLecture: (lecture_id: string, mode: "summary" | "notes" = "summary") =>
-    req<{ markdown: string }>("/ai/summarise-lecture", {
-      method: "POST",
-      body: JSON.stringify({ lecture_id, mode }),
-    }),
   flashcards: (payload: { text?: string; note_id?: string }) =>
     req<{ cards: { q: string; a: string }[] }>("/ai/flashcards", {
       method: "POST",
       body: JSON.stringify(payload),
-    }),
-  explain: (text: string, context?: string) =>
-    req<{ markdown: string }>("/ai/explain", {
-      method: "POST",
-      body: JSON.stringify({ text, context }),
     }),
   reindex: () => req<{ chunks: number }>("/ai/reindex", { method: "POST" }),
   ask: (question: string, history: { role: string; content: string }[]) =>

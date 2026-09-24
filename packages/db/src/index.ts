@@ -69,6 +69,21 @@ function migrate(db: DatabaseSync): void {
   // Enrolments that aren't courses — notice boards, cohort groups, the library's
   // induction — come back on every sync, so ignoring one has to be remembered.
   add("courses", "excluded", "INTEGER NOT NULL DEFAULT 0");
+  // Where a transcript came from and what it cost to make — "captions" and
+  // "local-whisper" are free, "openai-whisper" is the line on the bill.
+  add("transcripts", "source", "TEXT");
+  add("transcripts", "model", "TEXT");
+  // Seconds of actual speech, as opposed to the room booking the recording spans.
+  add("transcripts", "speech_sec", "REAL");
+  // An optional tidied read-through (Settings → "tidy up transcripts"), kept
+  // apart from `text` so the transcript stays aligned with its timestamps.
+  add("transcripts", "clean_text", "TEXT");
+  // Chunks that know which lecture and which moment they came from, so a search
+  // hit or a chat citation can open the recording at the right second.
+  add("chunks", "lecture_id", "TEXT");
+  add("chunks", "start_sec", "REAL");
+  add("chunks", "end_sec", "REAL");
+  add("chunks", "source_hash", "TEXT");
 }
 
 /** Simple key/value settings helpers. */

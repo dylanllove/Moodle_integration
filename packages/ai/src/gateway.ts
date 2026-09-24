@@ -45,6 +45,21 @@ export function estimateCost(model: string, inChars: number, outChars: number): 
   return (tokens(inChars) * p.in + tokens(outChars) * p.out) / 1e6;
 }
 
+/**
+ * Per-minute audio rates. Kept beside the token prices so the one place that
+ * knows what OpenAI charges is this file, and so a transcription can be priced
+ * *before* it's sent rather than discovered on the bill afterwards.
+ */
+const AUDIO_PRICES_PER_MIN: Record<string, number> = {
+  "whisper-1": 0.006,
+  "gpt-4o-transcribe": 0.006,
+  "gpt-4o-mini-transcribe": 0.003,
+};
+
+export function estimateAudioCost(model: string, seconds: number): number {
+  return ((AUDIO_PRICES_PER_MIN[model] ?? 0.006) * seconds) / 60;
+}
+
 /* --- Is there a local model? ----------------------------------------------- */
 
 let localSeen: { at: number; ok: boolean; models: string[] } | null = null;
@@ -77,6 +92,20 @@ export function hasApiKey(): boolean {
   return Boolean(process.env.OPENAI_API_KEY);
 }
 
+/**
+ * Could a call at this tier be answered at all — by either provider?
+ *
+ * "Is there an OpenAI key" was the question callers used to ask, which meant a
+ * student running Ollama with no key got no notes and no flashcards even though
+ * the gateway would happily have routed the work to their own machine.
+ */
+export async function canComplete(): Promise<boolean> {
+  const pref = preference();
+  if (pref === "openai") return hasApiKey();
+  const local = (await localStatus()).ok;
+  return pref === "local" ? local : local || hasApiKey();
+}
+
 async function choose(tier: AiTier): Promise<{ provider: Provider; model: string }> {
   const pref = preference();
   const local = await localStatus();
@@ -105,6 +134,12 @@ export interface Spend {
   byTask: { task: string; provider: string; calls: number; usd: number }[];
 }
 
+/** What's left of this month's cap, or null when there is no cap. */
+export function remainingBudgetUsd(): number | null {
+  const cap = budgetUsd();
+  return cap == null ? null : Math.max(0, cap - spend().monthUsd);
+}
+
 export function budgetUsd(): number | null {
   const raw = getSetting("ai_budget_usd");
   const n = raw ? Number(raw) : NaN;
@@ -120,7 +155,9 @@ export function spend(): Spend {
   const month = new Date().toISOString().slice(0, 7);
   const today = new Date().toISOString().slice(0, 10);
   const sum = (where: string, arg: string) =>
-    ((db.prepare(`SELECT COALESCE(SUM(usd),0) AS s FROM ai_usage WHERE ${where}`).get(arg) as {
+    // Cache hits carry the cost they *avoided* (see cacheStats), which is
+    // exactly what must not count against the budget.
+    ((db.prepare(`SELECT COALESCE(SUM(usd),0) AS s FROM ai_usage WHERE cached = 0 AND ${where}`).get(arg) as {
       s: number;
     }).s ?? 0);
 
@@ -134,7 +171,8 @@ export function spend(): Spend {
     byTask: (
       db
         .prepare(
-          `SELECT task, provider, COUNT(*) AS calls, COALESCE(SUM(usd),0) AS usd
+          `SELECT task, provider, COUNT(*) AS calls,
+                  COALESCE(SUM(CASE WHEN cached = 0 THEN usd ELSE 0 END),0) AS usd
              FROM ai_usage WHERE substr(at,1,7) = ?
             GROUP BY task, provider ORDER BY usd DESC LIMIT 20`,
         )
@@ -315,6 +353,12 @@ export interface CompleteOpts {
   temperature?: number;
   /** Ask for a JSON object — used where the answer is data, not prose. */
   json?: boolean;
+  /**
+   * Constrain the answer to a JSON Schema. Stronger than `json`: OpenAI's strict
+   * structured outputs and Ollama's schema-guided decoding both guarantee the
+   * shape, so the caller parses instead of hoping.
+   */
+  schema?: { name: string; schema: Record<string, unknown> };
   /** Which half of the split above this work belongs to. Defaults to bulk. */
   tier?: AiTier;
   /** Names the line in the spend ledger. */
@@ -338,7 +382,17 @@ export async function route(prompt: string, opts: CompleteOpts = {}): Promise<Ro
     ? { provider: "openai" as Provider, model: opts.model }
     : await choose(tier);
 
-  const key = cacheKey([provider, model, opts.system ?? "", prompt, opts.maxTokens, opts.temperature, opts.json]);
+  const key = cacheKey([
+    provider,
+    model,
+    opts.system ?? "",
+    prompt,
+    opts.maxTokens,
+    opts.temperature,
+    opts.json,
+    ...(opts.schema ? [opts.schema] : []),
+  ]);
+  const inChars = prompt.length + (opts.system?.length ?? 0);
   if (opts.cache) {
     const hit = cacheGet(key);
     if (hit != null) {
@@ -347,9 +401,9 @@ export async function route(prompt: string, opts: CompleteOpts = {}): Promise<Ro
         provider,
         model,
         task,
-        inChars: prompt.length,
+        inChars,
         outChars: hit.length,
-        usd: provider === "openai" ? estimateCost(model, prompt.length + (opts.system?.length ?? 0), hit.length) : 0,
+        usd: provider === "openai" ? estimateCost(model, inChars, hit.length) : 0,
         cached: true,
       });
       return { text: hit, provider, model, cached: true, usd: 0 };
@@ -370,10 +424,8 @@ export async function route(prompt: string, opts: CompleteOpts = {}): Promise<Ro
       ? await callLocal(prompt, model, opts)
       : await callOpenAi(prompt, model, opts);
 
-  const usd = provider === "openai"
-    ? estimateCost(model, prompt.length + (opts.system?.length ?? 0), text.length)
-    : 0;
-  record({ provider, model, task, inChars: prompt.length, outChars: text.length, usd });
+  const usd = provider === "openai" ? estimateCost(model, inChars, text.length) : 0;
+  record({ provider, model, task, inChars, outChars: text.length, usd });
   if (opts.cache) cachePut(key, task, text);
   noteSuccess(provider);
   return { text, provider, model, cached: false, usd };
@@ -400,7 +452,16 @@ async function callOpenAi(prompt: string, model: string, opts: CompleteOpts): Pr
       messages,
       max_tokens: opts.maxTokens ?? 2048,
       temperature: opts.temperature ?? 0.3,
-      ...(opts.json ? { response_format: { type: "json_object" } } : {}),
+      ...(opts.schema
+        ? {
+            response_format: {
+              type: "json_schema",
+              json_schema: { name: opts.schema.name, schema: opts.schema.schema, strict: true },
+            },
+          }
+        : opts.json
+          ? { response_format: { type: "json_object" } }
+          : {}),
     }),
   });
   const json = (await res.json().catch(() => ({}))) as any;
@@ -423,10 +484,11 @@ async function callLocal(prompt: string, model: string, opts: CompleteOpts): Pro
       model,
       messages,
       stream: false,
-      ...(opts.json ? { format: "json" } : {}),
+      ...(opts.schema ? { format: opts.schema.schema } : opts.json ? { format: "json" } : {}),
       options: {
         temperature: opts.temperature ?? 0.3,
         num_predict: opts.maxTokens ?? 2048,
+        num_ctx: contextFor(prompt.length + (opts.system?.length ?? 0), opts.maxTokens ?? 2048),
       },
     }),
     // A local model is slower per token than the API; a long transcript chunk
@@ -441,6 +503,21 @@ async function callLocal(prompt: string, model: string, opts: CompleteOpts): Pro
   }
   const json = (await res.json()) as { message?: { content?: string } };
   return (json.message?.content ?? "").trim();
+}
+
+/**
+ * A context window big enough for this prompt and its answer.
+ *
+ * Ollama defaults to a few thousand tokens and silently drops whatever doesn't
+ * fit from the *front* of the prompt — so a lecture sent without this came back
+ * as notes on its last ten minutes. Rounded up to a power of two so the model
+ * isn't reloaded for every slightly different length.
+ */
+function contextFor(inChars: number, maxTokens: number): number {
+  const needed = tokens(inChars) + maxTokens + 512;
+  let ctx = 4096;
+  while (ctx < needed && ctx < 65_536) ctx *= 2;
+  return ctx;
 }
 
 const round4 = (n: number) => Math.round(n * 10000) / 10000;

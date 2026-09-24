@@ -1,3 +1,4 @@
+import type { TranscriptSegment } from "@uni/db";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { existsSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -308,11 +309,21 @@ function toLesson(item: any): EchoLesson | null {
   };
 }
 
+/**
+ * Captions with their timing kept. Echo's cues say when each line was spoken;
+ * flattening them to one string (as this used to) threw away the only thing that
+ * lets a note, a search hit or a flashcard link back to the moment in the video.
+ */
+export interface Captions {
+  text: string;
+  segments: TranscriptSegment[] | null;
+}
+
 export async function fetchTranscript(
   ctx: BrowserContext,
   lessonId: string,
   mediaId: string,
-): Promise<string | null> {
+): Promise<Captions | null> {
   const r = await ctx.request.get(
     `${ORIGIN}/api/ui/echoplayer/lessons/${lessonId}/medias/${mediaId}/transcript`,
     { headers: { accept: "application/json" }, failOnStatusCode: false },
@@ -321,40 +332,90 @@ export async function fetchTranscript(
   return parseTranscript(await r.text());
 }
 
-function parseTranscript(body: string): string | null {
+/** Seconds from a cue field that might be seconds, milliseconds or "hh:mm:ss.mmm". */
+function cueTime(v: unknown, ms = false): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return ms ? v / 1000 : v;
+  if (typeof v === "string") {
+    const m = /^(?:(\d+):)?(\d{1,2}):(\d{2})(?:[.,](\d{1,3}))?$/.exec(v.trim());
+    if (m) return (+(m[1] ?? 0)) * 3600 + +m[2]! * 60 + +m[3]! + +(m[4] ?? "0").padEnd(3, "0") / 1000;
+    const n = Number(v);
+    if (Number.isFinite(n)) return ms ? n / 1000 : n;
+  }
+  return null;
+}
+
+function fromCues(cues: TranscriptSegment[]): Captions | null {
+  const clean = cues.filter((c) => c.text);
+  if (!clean.length) return null;
+  const text = clean.map((c) => c.text).join(" ").replace(/\s+/g, " ").trim();
+  const timed = clean.every((c) => Number.isFinite(c.start));
+  return text ? { text, segments: timed ? clean : null } : null;
+}
+
+export function parseTranscript(body: string): Captions | null {
   const text = body.trim();
   if (!text) return null;
+  let j: any;
   try {
-    const j = JSON.parse(text);
-    if (typeof j === "string") return j;
-    if (typeof j?.transcript === "string") return j.transcript;
-    const arr = j?.data ?? j?.cues ?? (Array.isArray(j) ? j : null);
-    if (Array.isArray(arr)) {
-      const joined = arr.map((c: any) => c?.content ?? c?.text ?? c?.transcript ?? "").join(" ").trim();
-      return joined || null;
-    }
+    j = JSON.parse(text);
   } catch {
-    /* not JSON */
+    j = undefined; // not JSON — VTT/SRT or plain text below
+  }
+  if (j !== undefined) {
+    if (typeof j === "string") return { text: j, segments: null };
+    if (typeof j?.transcript === "string") return { text: j.transcript, segments: null };
+    // Echo's transcript API: { status, data: { contentJSON: { cues: [...] } } }.
+    const arr = [
+      j?.data?.contentJSON?.cues,
+      j?.contentJSON?.cues,
+      j?.data?.cues,
+      j?.cues,
+      j?.data,
+      j,
+    ].find(Array.isArray);
+    if (arr) {
+      return fromCues(
+        arr.map((c: any) => {
+          const start =
+            cueTime(c?.start ?? c?.startTime ?? c?.begin) ?? cueTime(c?.startMs, true) ?? NaN;
+          const end = cueTime(c?.end ?? c?.endTime) ?? cueTime(c?.endMs, true) ?? start;
+          const t = String(c?.content ?? c?.text ?? c?.transcript ?? "").replace(/\s+/g, " ").trim();
+          return { start, end, text: t };
+        }),
+      );
+    }
+    // JSON we don't recognise is not a transcript. Storing it as one is how raw
+    // API responses ended up as a lecture's "text" and were made into notes.
+    return null;
   }
   if (/-->/.test(text)) {
-    return (
-      text
-        .replace(/^WEBVTT.*$/m, "")
-        .split(/\r?\n/)
-        .filter((l) => l && !/-->/.test(l) && !/^\d+$/.test(l.trim()))
+    // WebVTT / SRT: a timing line, then one or more text lines, then a blank.
+    const cues: TranscriptSegment[] = [];
+    for (const block of text.replace(/\r/g, "").split(/\n{2,}/)) {
+      const lines = block.split("\n");
+      const i = lines.findIndex((l) => l.includes("-->"));
+      if (i < 0) continue;
+      const [a, b] = lines[i]!.split("-->").map((x) => x.trim().split(/\s+/)[0]!);
+      const start = cueTime(a) ?? NaN;
+      const end = cueTime(b) ?? start;
+      const t = lines
+        .slice(i + 1)
         .join(" ")
+        .replace(/<[^>]+>/g, "")
         .replace(/\s+/g, " ")
-        .trim() || null
-    );
+        .trim();
+      cues.push({ start, end, text: t });
+    }
+    return fromCues(cues);
   }
-  return text;
+  return { text, segments: null };
 }
 
 export interface ClassroomProbe {
   /** Every media id the player referenced — the transcript API is per-media. */
   mediaIds: string[];
   /** Captions the player fetched for itself, if any. */
-  transcript: string | null;
+  transcript: Captions | null;
   manifest: AudioManifest | null;
 }
 
@@ -376,7 +437,7 @@ export async function probeClassroom(
   const page: Page = await ctx.newPage();
   const streams: string[] = [];
   const mediaIds = new Set<string>();
-  const captions: string[] = [];
+  const captions: Captions[] = [];
 
   page.on("response", (res) => {
     const url = res.url();
@@ -388,7 +449,7 @@ export async function probeClassroom(
       .text()
       .then((body) => {
         const parsed = parseTranscript(body);
-        if (parsed && parsed.length > 40) captions.push(parsed);
+        if (parsed && parsed.text.length > 40) captions.push(parsed);
       })
       .catch(() => {});
   });
@@ -398,38 +459,108 @@ export async function probeClassroom(
       .goto(`${ORIGIN}/lesson/${lessonId}/classroom`, { waitUntil: "domcontentloaded", timeout: 60000 })
       .catch(() => {});
     await page.evaluate(() => document.querySelector<HTMLMediaElement>("video,audio")?.play?.()).catch(() => {});
-    // Captions load early; the stream can take a while to be requested. Stop as
-    // soon as we have what this call actually came for.
+    // Captions load early; the stream can take a while to be requested, and the
+    // player asks for several playlists — camera-only, screen+audio, and their
+    // quality variants — in no fixed order. Taking the first one that appeared
+    // is how a lecture ended up "transcribed" from a silent camera feed, so keep
+    // looking until a playlist that actually carries audio turns up.
     const deadline = Date.now() + 25_000;
+    let audio: string | null = null;
+    const noAudio = new Set<string>();
     while (Date.now() < deadline) {
       if (opts.needManifest === false && (captions.length > 0 || mediaIds.size > 0)) break;
-      if (streams.length > 0) break;
+      if (streams.length > 0) {
+        audio = await audioPlaylist(ctx, streams, noAudio);
+        if (audio) break;
+      }
       await page.waitForTimeout(1000);
+    }
+    // Nothing declared its audio — a single-stream lesson the player only asked
+    // for media playlists of. Hand ffmpeg the combined stream, as before; the
+    // download-length check catches it if that has no sound either.
+    if (!audio && streams.length > 0 && opts.needManifest !== false) {
+      audio = streams.find((u) => /_av\./i.test(u)) ?? streams[0]!;
     }
 
     let manifest: AudioManifest | null = null;
-    if (streams.length > 0) {
-      const url = streams.find((u) => /s2_av|s2q0|_av/i.test(u)) ?? streams[0]!;
+    if (audio) {
       const cookies = await ctx.cookies();
       manifest = {
-        url,
+        url: audio,
         headers: { Cookie: cookies.map((c) => `${c.name}=${c.value}`).join("; "), Referer: ORIGIN },
       };
     }
     // Longest wins: a player often loads a short cue window before the full track.
-    const transcript = captions.sort((a, b) => b.length - a.length)[0] ?? null;
+    const transcript = captions.sort((a, b) => b.text.length - a.text.length)[0] ?? null;
     return { mediaIds: [...mediaIds], transcript, manifest };
   } finally {
     await page.close().catch(() => {});
   }
 }
 
-/** Kept for callers that only want the stream. */
-export async function sniffAudioManifest(
+/**
+ * The playlist to read audio from, out of everything the player requested.
+ *
+ * Echo publishes one master per source: `s1_v` (camera, no sound) and `s2_av`
+ * (screen plus the room microphone), and the latter declares its sound as a
+ * separate audio-only rendition (`#EXT-X-MEDIA:TYPE=AUDIO,URI="s0q0.m3u8"`).
+ * Following that URI downloads just the audio — a few MB for a lecture instead of
+ * the whole video — and a master with no audio is never chosen at all.
+ */
+async function audioPlaylist(
   ctx: BrowserContext,
-  lessonId: string,
-): Promise<AudioManifest | null> {
-  return (await probeClassroom(ctx, lessonId)).manifest;
+  urls: string[],
+  noAudio: Set<string>,
+): Promise<string | null> {
+  const masters = [...new Set(urls)]
+    .filter((u) => !noAudio.has(u))
+    .sort((a, b) => Number(/_av\./i.test(b)) - Number(/_av\./i.test(a)));
+  for (const url of masters) {
+    const body = await ctx.request
+      .get(url, { headers: { Referer: ORIGIN }, failOnStatusCode: false })
+      .then((r) => (r.ok() ? r.text() : ""))
+      .catch(() => "");
+    if (!body.startsWith("#EXTM3U")) continue;
+    noAudio.add(url);
+    const uri = /#EXT-X-MEDIA:[^\n]*TYPE=AUDIO[^\n]*URI="([^"]+)"/.exec(body)?.[1];
+    if (uri) return singleFile(ctx, resolvePlaylist(url, uri));
+    // A master whose variants carry an audio codec will do, via ffmpeg's own selection.
+    if (/#EXT-X-STREAM-INF:[^\n]*mp4a/.test(body)) return url;
+    // A media playlist (segments, no variants) can't be told apart here; skip it.
+  }
+  return null;
+}
+
+/**
+ * Echo's audio renditions are one fragmented MP4 cut into byte ranges, and
+ * ffmpeg's HLS reader stops after the first range of those — a 55-minute lecture
+ * came down as its first ten seconds. When every segment is the same file, read
+ * that file instead: the whole lecture's audio in one request, in seconds.
+ */
+async function singleFile(ctx: BrowserContext, playlist: string): Promise<string> {
+  const body = await ctx.request
+    .get(playlist, { headers: { Referer: ORIGIN }, failOnStatusCode: false })
+    .then((r) => (r.ok() ? r.text() : ""))
+    .catch(() => "");
+  const files = new Set(
+    body
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith("#")),
+  );
+  const map = /#EXT-X-MAP:URI="([^"]+)"/.exec(body)?.[1];
+  if (files.size === 1 && body.includes("#EXT-X-BYTERANGE")) {
+    const [file] = [...files];
+    if (!map || map === file) return resolvePlaylist(playlist, file!);
+  }
+  return playlist;
+}
+
+/** A playlist's relative URI, resolved against it, keeping any signed query string. */
+function resolvePlaylist(base: string, uri: string): string {
+  const resolved = new URL(uri, base);
+  if (!resolved.search) resolved.search = new URL(base).search;
+  return resolved.toString();
 }
 
 /**
@@ -442,11 +573,12 @@ export async function fetchAnyTranscript(
   ctx: BrowserContext,
   lessonId: string,
   mediaIds: (string | null)[],
-): Promise<string | null> {
+): Promise<Captions | null> {
+  let best: Captions | null = null;
   for (const mediaId of mediaIds) {
     if (!mediaId) continue;
     const t = await fetchTranscript(ctx, lessonId, mediaId).catch(() => null);
-    if (t && t.length > 40) return t;
+    if (t && t.text.length > (best?.text.length ?? 40)) best = t;
   }
-  return null;
+  return best;
 }

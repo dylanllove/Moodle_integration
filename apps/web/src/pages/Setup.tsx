@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type SetupStatus } from "../api.js";
+import { CONNECTIONS_CHANGED } from "../Connections.js";
 import {
   Card,
   PageHeader,
@@ -373,6 +374,7 @@ function MoodleConnect({ initialUrl, onDone }: { initialUrl: string; onDone: () 
       if (method === "signin") await api.setupMoodleLogin(url, username, password);
       else await api.setupMoodleToken(url, token);
       setPassword("");
+      window.dispatchEvent(new Event(CONNECTIONS_CHANGED));
       onDone();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -559,6 +561,7 @@ function OpenAiKey({ onDone }: { onDone: () => void }) {
     setErr(null);
     try {
       await api.setupOpenai(key);
+      window.dispatchEvent(new Event(CONNECTIONS_CHANGED));
       setKey("");
       onDone();
     } catch (e) {

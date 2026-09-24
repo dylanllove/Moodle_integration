@@ -13,6 +13,43 @@ export async function extractSlideText(url: string, mimetype = ""): Promise<stri
   return "";
 }
 
+/** A deck's text, one entry per slide/page, so a note can cite "slide 6". */
+export interface SlidePage {
+  page: number;
+  text: string;
+}
+
+export async function extractSlidePages(url: string, mimetype = ""): Promise<SlidePage[]> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`download failed: ${res.status}`);
+  return pagesOf(Buffer.from(await res.arrayBuffer()), mimetype || guessFromUrl(url));
+}
+
+export async function extractFilePages(path: string, mimetype = ""): Promise<SlidePage[]> {
+  return pagesOf(readFileSync(path), mimetype || guessFromUrl(path));
+}
+
+async function pagesOf(buf: Buffer, kind: string): Promise<SlidePage[]> {
+  if (/pdf/i.test(kind)) {
+    const { extractText, getDocumentProxy } = await import("unpdf");
+    const pdf = await getDocumentProxy(new Uint8Array(buf));
+    const { text } = await extractText(pdf, { mergePages: false });
+    return (Array.isArray(text) ? text : [text])
+      .map((t, i) => ({ page: i + 1, text: t.replace(/\s+/g, " ").trim() }))
+      .filter((p) => p.text);
+  }
+  if (/presentation|powerpoint|pptx?/i.test(kind)) {
+    return (await extractPptx(buf))
+      .split(/\n\n(?=### Slide \d+\n)/)
+      .map((block) => {
+        const m = /^### Slide (\d+)\n([\s\S]*)$/.exec(block.trim());
+        return m ? { page: Number(m[1]), text: m[2]!.trim() } : null;
+      })
+      .filter((p): p is SlidePage => Boolean(p?.text));
+  }
+  return [];
+}
+
 /**
  * Same extraction, for a file already on disk — used by the materials library so
  * a downloaded deck is fetched once and read from local bytes thereafter.

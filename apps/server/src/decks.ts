@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDb } from "@uni/db";
-import { generateDeck, hasApiKey } from "@uni/ai";
+import { canComplete, generateDeck } from "@uni/ai";
 import { availability, intakeFor, markIntroduced } from "./card-schedule.js";
 
 /**
@@ -230,7 +230,9 @@ export async function generateFrom(
   src: DeckSource,
   opts: { count?: number } = {},
 ): Promise<{ id: string; cards: number; title: string } | null> {
-  if (!hasApiKey()) throw new Error("OPENAI_API_KEY is not set — add it in Settings.");
+  if (!(await canComplete())) {
+    throw new Error("No AI model available — add an OpenAI key or start a local model in Settings.");
+  }
   const db = getDb();
   const material = gatherText(src);
   if (!material || material.text.length < 400) return null;

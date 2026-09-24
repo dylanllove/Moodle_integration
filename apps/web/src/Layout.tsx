@@ -4,6 +4,7 @@ import { api, type AiHealth, type SyncProgress } from "./api.js";
 import { ChatWidget } from "./ChatWidget.js";
 import { CommandPalette } from "./CommandPalette.js";
 import { Button } from "./ui.js";
+import { ConnectionBanner } from "./Connections.js";
 
 function relTime(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -290,6 +291,7 @@ export function Layout() {
 
         <main className="min-h-screen flex-1">
           <div className="mx-auto max-w-[1200px] px-10 py-14">
+            <ConnectionBanner />
             {progress?.ai && !progress.ai.ok && <AiFaultBanner ai={progress.ai} />}
             <Outlet />
           </div>

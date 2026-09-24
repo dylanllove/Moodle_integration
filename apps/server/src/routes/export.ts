@@ -43,7 +43,7 @@ export async function registerExportRoutes(app: FastifyInstance): Promise<void> 
   app.get<{ Params: { id: string } }>("/api/export/lecture/:id", async (req, reply) => {
     const row = getDb()
       .prepare(
-        `SELECT l.title, l.provider, t.text FROM lectures l
+        `SELECT l.title, l.provider, COALESCE(t.clean_text, t.text) AS text FROM lectures l
          LEFT JOIN transcripts t ON t.lecture_id = l.id WHERE l.id = ?`,
       )
       .get(req.params.id) as { title: string; provider: string | null; text: string | null } | undefined;

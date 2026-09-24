@@ -167,8 +167,25 @@ export async function registerCoreRoutes(app: FastifyInstance): Promise<void> {
   app.get<{ Params: { id: string } }>("/api/lectures/:id", async (req, reply) => {
     const lecture = db.prepare("SELECT * FROM lectures WHERE id = ?").get(req.params.id);
     if (!lecture) return reply.code(404).send({ error: "not found" });
-    const transcript = db.prepare("SELECT * FROM transcripts WHERE lecture_id = ?").get(req.params.id);
-    return { lecture, transcript: transcript ?? null };
+    const id = req.params.id;
+    const transcript = db.prepare("SELECT * FROM transcripts WHERE lecture_id = ?").get(id);
+    // The structured study material, when the lecture has been analysed. Each row
+    // carries start_sec (seconds, or a slide number per digest.anchor), so the
+    // page can jump from a concept to the moment it was taught.
+    const digest = db.prepare("SELECT * FROM lecture_digests WHERE lecture_id = ?").get(id) as
+      | (Record<string, unknown> & { topics: string })
+      | undefined;
+    const rows = (table: string, order: string) =>
+      db.prepare(`SELECT * FROM ${table} WHERE lecture_id = ? ORDER BY ${order}`).all(id);
+    return {
+      lecture,
+      transcript: transcript ?? null,
+      digest: digest ? { ...digest, topics: safeJson(digest.topics, []) } : null,
+      sections: rows("lecture_sections", "idx"),
+      concepts: rows("lecture_concepts", "start_sec IS NULL, start_sec"),
+      emphasis: rows("lecture_emphasis", "start_sec IS NULL, start_sec"),
+      questions: rows("lecture_questions", "start_sec IS NULL, start_sec"),
+    };
   });
 
   // Unified calendar feed for active courses (plus course-less events), windowed by ?from=&to=.
@@ -185,4 +202,12 @@ export async function registerCoreRoutes(app: FastifyInstance): Promise<void> {
     }
     return db.prepare(`SELECT e.* FROM events e WHERE ${activeFilter} ORDER BY e.start_at`).all();
   });
+}
+
+function safeJson<T>(raw: string, fallback: T): T {
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
 }

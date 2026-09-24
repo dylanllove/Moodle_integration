@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type AutoSync, type Course, type DigestStatus, type EchoSection, type SyncStatus } from "../api.js";
 import { NotionSettings } from "../NotionSettings.js";
 import { AiSettings } from "../AiSettings.js";
+import { ConnectionsCard } from "../Connections.js";
 import {
   Card,
   PageHeader,
@@ -17,15 +18,11 @@ import {
 } from "../ui.js";
 
 export function Settings() {
-  const [hasKey, setHasKey] = useState(false);
-  const [hasToken, setHasToken] = useState(false);
   const [reminder, setReminder] = useState(3);
   const [automation, setAutomation] = useState({ materials: true, flashcards: true });
 
   async function load() {
     const [s, r] = await Promise.all([api.settings(), api.reminderDays().catch(() => ({ days: 3 }))]);
-    setHasKey(s.has_api_key === "true");
-    setHasToken(s.has_moodle_token === "true");
     setReminder(r.days);
     setAutomation({
       materials: s.auto_materials !== "false",
@@ -48,18 +45,7 @@ export function Settings() {
     <div>
       <PageHeader title="Settings" subtitle="Connections, sync destinations & preferences" />
       <div className="space-y-5">
-        <Card className="p-6">
-          <SectionTitle className="mb-5">Connections</SectionTitle>
-          <div className="divide-y divide-hair">
-            <Row
-              ok={hasToken}
-              label="Moodle"
-              okText="connected via API token"
-              badText="not connected — run through setup"
-            />
-            <Row ok={hasKey} label="OpenAI" okText="connected" badText="no key — run through setup" />
-          </div>
-        </Card>
+        <ConnectionsCard />
 
         <AiSettings />
         <SyncCard />
@@ -998,14 +984,5 @@ function Dot({ ok }: { ok: boolean }) {
       className={`h-2 w-2 shrink-0 rounded-pill ${ok ? "bg-accent-deep" : "bg-amber-400"}`}
       aria-hidden="true"
     />
-  );
-}
-function Row({ ok, label, okText, badText }: { ok: boolean; label: string; okText: string; badText: string }) {
-  return (
-    <div className="flex flex-wrap items-center gap-2.5 py-3 text-sm">
-      <Dot ok={ok} />
-      <span className="font-medium text-ink">{label}</span>
-      <span className={ok ? "text-accent-deep" : "text-ink-muted"}>{ok ? okText : badText}</span>
-    </div>
   );
 }

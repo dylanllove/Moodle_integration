@@ -1,34 +1,28 @@
-import { openContext, profileDir } from "@uni/lms";
-import { dataDir, type Lecture } from "@uni/db";
-import { join } from "node:path";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { extractAudioMp3 } from "./ffmpeg.js";
+import { openContext } from "@uni/lms";
+import type { Lecture } from "@uni/db";
 
-export interface AudioSource {
-  /** Path to a local mono 16kHz MP3 ready for transcription. */
-  audioPath: string;
+/** Something ffmpeg can read audio from: a URL (with auth headers) or a local file. */
+export interface MediaSource {
+  input: string;
+  headers?: Record<string, string>;
 }
 
 const MEDIA_RE = /\.(m3u8|mp4|m4v|webm|mov|m4a|mp3)(\?|$)/i;
 
 /**
- * Resolve a lecture's recording to a local WAV, reusing the logged-in browser
- * session. Handles direct media URLs and best-effort sniffing of embedded
- * players (Panopto/Echo360/Kaltura) by watching network traffic for a media
- * URL, then letting ffmpeg pull audio (including HLS streams).
+ * Find where a lecture's recording actually streams from, reusing the logged-in
+ * browser session. Handles direct media URLs and best-effort sniffing of embedded
+ * players (Panopto/Kaltura/…) by watching network traffic for a media URL.
+ *
+ * It returns the source rather than downloading it: ffmpeg reads the stream
+ * itself with the session cookie and keeps only the audio, instead of the whole
+ * video file being buffered in memory and written to disk first.
  *
  * DRM-protected streams can't be captured; those raise a clear error.
  */
-export async function resolveAudio(lecture: Lecture): Promise<AudioSource> {
-  const outDir = join(dataDir(), "media");
-  mkdirSync(outDir, { recursive: true });
-  const audioPath = join(outDir, `${lecture.id.replace(/[^\w.-]/g, "_")}.mp3`);
-
+export async function resolveMediaSource(lecture: Lecture): Promise<MediaSource> {
   // Fast path: a known direct media URL (incl. Moodle pluginfile with ?token=).
-  if (lecture.media_url && MEDIA_RE.test(lecture.media_url)) {
-    await extractAudioMp3(lecture.media_url, audioPath);
-    return { audioPath };
-  }
+  if (lecture.media_url && MEDIA_RE.test(lecture.media_url)) return { input: lecture.media_url };
 
   const target = lecture.media_url || lecture.url;
   if (!target) throw new Error("Lecture has no URL to fetch.");
@@ -71,23 +65,12 @@ export async function resolveAudio(lecture: Lecture): Promise<AudioSource> {
     }
 
     // Prefer a progressive file; else use the HLS manifest.
-    const progressive = found.find((u) => /\.(mp4|m4v|webm|mov|m4a|mp3)(\?|$)/i.test(u));
-    const cookieHeader = await cookieHeaderFor(ctx, target);
-
-    if (progressive) {
-      const resp = await ctx.request.get(progressive);
-      if (!resp.ok()) throw new Error(`Media download failed: ${resp.status()}`);
-      const tmp = join(outDir, `${lecture.id.replace(/[^\w.-]/g, "_")}.src`);
-      writeFileSync(tmp, Buffer.from(await resp.body()));
-      await extractAudioMp3(tmp, audioPath);
-    } else {
-      // HLS: hand the manifest URL to ffmpeg with the session cookie.
-      const m3u8 = found.find((u) => /\.m3u8(\?|$)/i.test(u))!;
-      await extractAudioMp3(m3u8, audioPath, cookieHeader ? { Cookie: cookieHeader } : undefined);
-    }
-
+    const url =
+      found.find((u) => /\.(mp4|m4v|webm|mov|m4a|mp3)(\?|$)/i.test(u)) ??
+      found.find((u) => /\.m3u8(\?|$)/i.test(u))!;
+    const cookie = await cookieHeaderFor(ctx, url);
     await page.close();
-    return { audioPath };
+    return { input: url, headers: cookie ? { Cookie: cookie, Referer: target } : undefined };
   } finally {
     await ctx.close().catch(() => {});
   }
@@ -106,6 +89,3 @@ async function cookieHeaderFor(
     return null;
   }
 }
-
-// Referenced so the profile dir helper stays in the module graph for clarity.
-export { profileDir };

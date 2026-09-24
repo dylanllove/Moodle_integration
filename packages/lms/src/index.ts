@@ -36,13 +36,14 @@ export {
   listLessons,
   fetchTranscript,
   fetchAnyTranscript,
-  sniffAudioManifest,
   probeClassroom,
   ensureEchoLoggedIn,
   keepEchoSessionWarm,
   withEchoLock,
   type EchoLesson,
   type AudioManifest,
+  type Captions,
+  parseTranscript,
   type ClassroomProbe,
 } from "./echo360.js";
 export {

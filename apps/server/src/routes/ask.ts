@@ -1,11 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { getDb } from "@uni/db";
-import { complete, completeStream, hasApiKey, localStatus, retrieve } from "@uni/ai";
+import { canComplete, complete, completeStream, retrieve } from "@uni/ai";
 import { describeSource, type SourceRef } from "../sources.js";
 
 interface AskBody {
   question: string;
   history?: { role: string; content: string }[];
+  /** Only search this course's material — for asking from inside a course. */
+  courseId?: string | null;
 }
 
 /**
@@ -17,11 +19,11 @@ interface AskBody {
 function buildAsk(body: AskBody): { prompt: string; system: string; sources: SourceRef[] } {
   const question = body.question.trim();
   const context = buildContext();
-  const chunks = retrieve(question, null, 6);
+  const chunks = retrieve(question, body.courseId ?? null, 6);
   const contentBlock = chunks.length
     ? chunks
         .map((c, i) => {
-          const ref = describeSource(c.sourceType, c.sourceId);
+          const ref = describeSource(c.sourceType, c.sourceId, c.startSec);
           const label = ref ? `${ref.courseCode ? `${ref.courseCode} · ` : ""}${ref.label}` : "course material";
           return `[${i + 1}] (${label})\n${c.text}`;
         })
@@ -31,7 +33,7 @@ function buildAsk(body: AskBody): { prompt: string; system: string; sources: Sou
   const seen = new Set<string>();
   const sources: SourceRef[] = [];
   for (const c of chunks) {
-    const ref = describeSource(c.sourceType, c.sourceId);
+    const ref = describeSource(c.sourceType, c.sourceId, c.startSec);
     if (!ref) continue;
     const key = ref.to ?? ref.href ?? ref.label;
     if (seen.has(key)) continue;
@@ -61,7 +63,7 @@ function buildAsk(body: AskBody): { prompt: string; system: string; sources: Sou
 export async function registerAskRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: AskBody }>("/api/ai/ask", async (req, reply) => {
     // A local model is a complete substitute for a key here.
-    if (!hasApiKey() && !(await localStatus()).ok) {
+    if (!(await canComplete())) {
       return reply.code(400).send({
         error:
           "No model available: add an OpenAI key in setup, or install a local one to run this for free.",
@@ -86,7 +88,7 @@ export async function registerAskRoutes(app: FastifyInstance): Promise<void> {
    * answer arrive is the difference between "thinking" and "broken".
    */
   app.post<{ Body: AskBody }>("/api/ai/ask/stream", async (req, reply) => {
-    if (!hasApiKey() && !(await localStatus()).ok) {
+    if (!(await canComplete())) {
       return reply.code(400).send({
         error:
           "No model available: add an OpenAI key in setup, or install a local one to run this for free.",
