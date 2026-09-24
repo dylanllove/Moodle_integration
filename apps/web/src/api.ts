@@ -706,6 +706,8 @@ export const api = {
 
   // --- AI cost & providers ---
   aiStatus: () => req<AiStatus>("/ai/status"),
+  aiRecheck: () =>
+    req<{ ok: boolean; error?: string }>("/ai/recheck", { method: "POST" }),
   aiOptions: (body: {
     provider?: string;
     transcribeProvider?: string;

@@ -311,6 +311,30 @@ export function Layout() {
  * credits" and "this app is broken".
  */
 function AiFaultBanner({ ai }: { ai: AiHealth }) {
+  const [checking, setChecking] = useState(false);
+  const [cleared, setCleared] = useState(false);
+  const [still, setStill] = useState(false);
+
+  // The fault was recorded the moment the account ran dry — but topping up
+  // happens where the app can't see it, so let the user ask "is it fixed?"
+  // with one deliberately tiny paid call instead of waiting for the next
+  // real one to find out.
+  async function recheck() {
+    setChecking(true);
+    setStill(false);
+    try {
+      const r = await api.aiRecheck();
+      if (r.ok) setCleared(true);
+      else setStill(true);
+    } catch {
+      setStill(true);
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  if (cleared) return null;
+
   const REASON: Record<string, { title: string; what: string; action?: { label: string; href: string } }> = {
     quota: {
       title: "OpenAI has no credits left",
@@ -345,12 +369,22 @@ function AiFaultBanner({ ai }: { ai: AiHealth }) {
             <p className="mt-1.5 font-mono text-[11px] text-amber-900/60">{ai.message}</p>
           )}
         </div>
-        {r.action && (
-          <a href={r.action.href} target="_blank" rel="noreferrer">
-            <Button size="sm">{r.action.label}</Button>
-          </a>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {r.action && (
+            <a href={r.action.href} target="_blank" rel="noreferrer">
+              <Button size="sm">{r.action.label}</Button>
+            </a>
+          )}
+          <Button size="sm" onClick={recheck} disabled={checking}>
+            {checking ? "Checking…" : "Check again"}
+          </Button>
+        </div>
       </div>
+      {still && (
+        <p className="mt-2 text-[13px] text-amber-900/80">
+          Still failing — the account doesn't look topped up yet from here.
+        </p>
+      )}
     </div>
   );
 }

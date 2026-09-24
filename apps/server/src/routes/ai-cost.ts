@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { getSetting, setSetting } from "@uni/db";
-import { aiHealth, budgetUsd, cacheStats, clearCache, localStatus, setBudgetUsd, spend } from "@uni/ai";
+import { aiHealth, budgetUsd, cacheStats, clearCache, complete, localStatus, setBudgetUsd, spend } from "@uni/ai";
 import { localTranscriber } from "@uni/transcribe";
 
 /**
@@ -46,6 +46,24 @@ export async function registerAiCostRoutes(app: FastifyInstance): Promise<void> 
     }
     const [local, whisper] = await Promise.all([localStatus(true), localTranscriber(true)]);
     return { ok: true, spend: spend(), local: { text: local, audio: Boolean(whisper) } };
+  });
+
+  /**
+   * Re-test the AI path after a fault, instead of trusting a stored verdict.
+   *
+   * A quota fault records the moment the account ran dry — but topping up
+   * happens on OpenAI's website, where the app can't see it, so the banner
+   * would otherwise outlive the problem indefinitely. One deliberately tiny
+   * completion (a fraction of a cent) settles it either way: success clears
+   * the fault through the same noteSuccess path as any real call.
+   */
+  app.post("/api/ai/recheck", async () => {
+    try {
+      await complete("Reply with the single word: ok", { maxTokens: 4, task: "health-check" });
+      return { ok: true, health: aiHealth() };
+    } catch (e) {
+      return { ok: false, health: aiHealth(), error: String(e).slice(0, 200) };
+    }
   });
 
   /** Re-probe for a local model without waiting for the cache to lapse. */
