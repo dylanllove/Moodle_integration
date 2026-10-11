@@ -467,6 +467,13 @@ export function EmptyState({ icon, children }: { icon: string; children: ReactNo
   );
 }
 
+/** Like dueMeta, but a deadline already handed in on Learn says so instead of counting down. */
+export function deadlineMeta(e: { start_at: string; submission?: string | null }): ReturnType<typeof dueMeta> {
+  if (e.submission === "graded") return { label: "graded", tone: "green" };
+  if (e.submission === "submitted") return { label: "submitted", tone: "green" };
+  return dueMeta(e.start_at);
+}
+
 /** Relative "due in" label + tone for a date. */
 export function dueMeta(iso: string | null): {
   label: string;

@@ -150,7 +150,12 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Exams and finals are what the calculator solves for, so flag them on sight. */
 function looksFinal(title: string): boolean {
-  return /\b(final|exam|examination)\b/i.test(title) && !/practice|mock|past/i.test(title);
+  return (
+    /\b(final|exam|examination)\b/i.test(title) &&
+    !/practice|mock|past/i.test(title) &&
+    // "Final report" is the last piece of coursework, not the exam the calculator solves for.
+    !/\b(report|essay|project|presentation|reflection|portfolio)\b/i.test(title)
+  );
 }
 
 function findAssignment(cmid: number): string | null {

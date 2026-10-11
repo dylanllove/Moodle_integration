@@ -12,7 +12,7 @@ import {
   Reveal,
   EmptyState,
   Loading,
-  dueMeta,
+  deadlineMeta,
 } from "../ui.js";
 import { courseColor } from "../colors.js";
 import { TodayPlan } from "../TodayPlan.js";
@@ -237,7 +237,7 @@ export function Dashboard() {
       ) : (
         <div className="space-y-2">
           {shownDeadlines.map((e) => {
-            const meta = dueMeta(e.start_at);
+            const meta = deadlineMeta(e);
             return (
               <Card key={e.id} hover className="flex items-center gap-4 p-4">
                 <span className="h-9 w-1.5 shrink-0 rounded-pill" style={{ background: courseColor(e.course_id) }} />

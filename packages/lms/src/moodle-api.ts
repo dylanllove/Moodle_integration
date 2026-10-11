@@ -108,6 +108,7 @@ export async function syncMoodleApi(): Promise<MoodleSyncCounts> {
     for (const c of assignData.courses ?? []) {
       for (const a of c.assignments ?? []) {
         const id = `moodle:assign:${a.id}`;
+        const status = await submissionStatus(id, a.id, a.duedate);
         upsert(
           "assignments",
           {
@@ -120,7 +121,7 @@ export async function syncMoodleApi(): Promise<MoodleSyncCounts> {
             open_at: a.allowsubmissionsfromdate
               ? new Date(a.allowsubmissionsfromdate * 1000).toISOString()
               : null,
-            status: "open",
+            status,
             attachments: (a.introattachments ?? []).map((f) => ({
               name: f.filename,
               url: withToken(f.fileurl),
@@ -187,6 +188,34 @@ export async function syncMoodleApi(): Promise<MoodleSyncCounts> {
 
   materialiseAssignmentEvents();
   return counts;
+}
+
+/**
+ * Whether the student has handed an assignment in, as Learn records it. Only
+ * asked for assignments still in play (due in the last month, later, or
+ * undated) — older ones keep what was recorded, so a sync doesn't make a call
+ * for every assignment of the semester. A group's submission counts for
+ * everyone in it.
+ */
+async function submissionStatus(
+  id: string,
+  assignId: number,
+  dueSec: number,
+): Promise<"open" | "submitted" | "graded"> {
+  const known = (
+    getDb().prepare("SELECT status FROM assignments WHERE id = ?").get(id) as
+      | { status: "open" | "submitted" | "graded" }
+      | undefined
+  )?.status;
+  if (dueSec && dueSec < Date.now() / 1000 - 30 * 86400) return known ?? "open";
+  try {
+    const s = await ws<MoodleSubmissionStatus>("mod_assign_get_submission_status", { assignid: assignId });
+    const sub = s.lastattempt?.teamsubmission ?? s.lastattempt?.submission;
+    if (s.feedback?.gradefordisplay && (sub?.status === "submitted" || s.lastattempt?.graded)) return "graded";
+    return sub?.status === "submitted" ? "submitted" : "open";
+  } catch {
+    return known ?? "open";
+  }
 }
 
 /** Detect lecture-recording modules in a course and upsert them as lectures. */
@@ -394,6 +423,10 @@ function storeText(courseId: string, source: string, title: string | null, body:
 
 function classify(name: string, modulename?: string): string {
   const s = `${name} ${modulename ?? ""}`.toLowerCase();
+  // Something you hand in is a deadline even when it's the "final" one — a
+  // final report is written, not sat.
+  if (modulename === "assign" || /\bfinal\b.*\b(report|essay|project|presentation|reflection|portfolio)/.test(s))
+    return "deadline";
   if (/(exam|final|midterm|test)/.test(s)) return "exam";
   if (/(assign|quiz|submission|due|report|essay|dropbox)/.test(s)) return "deadline";
   if (/(lecture|tutorial|lab|seminar|class)/.test(s)) return "class";
@@ -458,6 +491,14 @@ function materialiseAssignmentEvents(): void {
 }
 
 // --- Moodle response shapes (only the fields we use) ---
+interface MoodleSubmissionStatus {
+  lastattempt?: {
+    submission?: { status: string } | null;
+    teamsubmission?: { status: string } | null;
+    graded?: boolean;
+  };
+  feedback?: { gradefordisplay?: string };
+}
 interface MoodleCourse {
   id: number;
   shortname: string;

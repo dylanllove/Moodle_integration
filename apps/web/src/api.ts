@@ -84,6 +84,8 @@ export interface CalEvent {
   url: string | null;
   location?: string | null;
   notes?: string | null;
+  /** The linked Learn assignment's state, when the event is one. */
+  submission?: "open" | "submitted" | "graded" | null;
 }
 
 export interface Material {

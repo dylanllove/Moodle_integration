@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { rmSync } from "node:fs";
 import { getDb } from "@uni/db";
+import { eventAssignment } from "../submission.js";
 
 /** Read endpoints for courses, assignments, lectures, notes and events. */
 export async function registerCoreRoutes(app: FastifyInstance): Promise<void> {
@@ -193,14 +194,15 @@ export async function registerCoreRoutes(app: FastifyInstance): Promise<void> {
     const { from, to } = req.query;
     const activeFilter =
       "(e.course_id IS NULL OR e.course_id IN (SELECT id FROM courses WHERE active = 1))";
+    const submission = `${eventAssignment("status")} AS submission`;
     if (from && to) {
       return db
         .prepare(
-          `SELECT e.* FROM events e WHERE ${activeFilter} AND e.start_at >= ? AND e.start_at <= ? ORDER BY e.start_at`,
+          `SELECT e.*, ${submission} FROM events e WHERE ${activeFilter} AND e.start_at >= ? AND e.start_at <= ? ORDER BY e.start_at`,
         )
         .all(from, to);
     }
-    return db.prepare(`SELECT e.* FROM events e WHERE ${activeFilter} ORDER BY e.start_at`).all();
+    return db.prepare(`SELECT e.*, ${submission} FROM events e WHERE ${activeFilter} ORDER BY e.start_at`).all();
   });
 }
 

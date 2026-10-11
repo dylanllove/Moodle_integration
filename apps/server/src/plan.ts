@@ -1,6 +1,7 @@
 import { getDb } from "@uni/db";
 import { courseGrades } from "./grades.js";
 import { availability, intakeFor } from "./card-schedule.js";
+import { eventAssignment, isHandedIn } from "./submission.js";
 
 /**
  * What to do today.
@@ -365,8 +366,8 @@ function upcoming(now: Date): Due[] {
   const events = db
     .prepare(
       `SELECT e.id, e.title, e.kind, e.start_at, e.course_id,
-              (SELECT a.id FROM assignments a
-                WHERE a.course_id = e.course_id AND a.due_at = e.start_at LIMIT 1) AS assignment_id
+              ${eventAssignment("id")} AS assignment_id,
+              ${eventAssignment("status")} AS submission
          FROM events e
         WHERE e.kind IN ('deadline','exam') AND e.start_at >= ?
         ORDER BY e.start_at`,
@@ -378,6 +379,7 @@ function upcoming(now: Date): Due[] {
     start_at: string;
     course_id: string | null;
     assignment_id: string | null;
+    submission: string | null;
   }[];
 
   for (const e of events) {
@@ -385,6 +387,10 @@ function upcoming(now: Date): Due[] {
     const key = `${e.course_id}|${normalise(clean)}`;
     if (seen.has(key)) continue;
     seen.add(key);
+    // Already handed in on Learn: nothing to plan, and it isn't the "next
+    // assessment" for the course any more. Still marked seen, so the matching
+    // gradebook row doesn't put it straight back.
+    if (isHandedIn(e.submission)) continue;
     out.push({
       id: e.id,
       title: clean,

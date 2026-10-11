@@ -16,7 +16,7 @@ import {
   Details,
   EmptyState,
   Loading,
-  dueMeta,
+  deadlineMeta,
 } from "../ui.js";
 
 type View = "month" | "week" | "agenda";
@@ -728,7 +728,7 @@ function Agenda({ events, courseCode }: { events: CalEvent[]; courseCode: (id: s
           <div className="space-y-2">
             {items.map((e) => {
               const t = typeOf(e.kind);
-              const meta = dueMeta(e.start_at);
+              const meta = deadlineMeta(e);
               return (
                 <Card key={e.id} hover className="flex items-center gap-3.5 p-4">
                   <span className="h-8 w-1 shrink-0 rounded-pill" style={{ background: t.color }} />
